@@ -84,6 +84,24 @@ GITHUB_TOKEN=... node dist/cli.js generate \
 The GitHub client fetches the pull request, changed files, reviews, review
 comments, and issue comments. `GH_TOKEN` is also supported.
 
+## Discover From Local Guidelines
+
+```bash
+node dist/cli.js discover --repo-path ../fire --output fire.taste.md
+node dist/cli.js discover --repo-path ../ice --output ice.taste.md
+```
+
+`discover` scans `guidelines/*.md` in the target repository and converts `###`
+rule headings into evidence-backed taste candidates. This is intentionally
+conservative: it uses the heading as the rule, the first paragraph as evidence,
+and scores committed guideline files as high-confidence project taste.
+
+This repository includes clean-run examples generated from the local Reiterate
+workspace:
+
+- `examples/fire.taste.md`
+- `examples/ice.taste.md`
+
 ## Include From AGENTS.md Or CLAUDE.md
 
 Generated `taste.md` is plain Markdown. Keep it in the project and reference it

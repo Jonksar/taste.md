@@ -5,6 +5,7 @@ import { argv, env, exit, stderr, stdout } from "node:process";
 import { deriveTasteCandidates, type PullRequestEvidence } from "./evidence.js";
 import { calculateConfidence } from "./formula.js";
 import { fetchPullRequestEvidence } from "./github.js";
+import { discoverGuidelineCandidates } from "./guidelines.js";
 import { renderTasteMarkdown } from "./markdown.js";
 
 const DEFAULT_OUTPUT = "taste.md";
@@ -36,6 +37,11 @@ async function main(args: string[]): Promise<void> {
     return;
   }
 
+  if (parsed.command === "discover") {
+    await runDiscover(parsed.flags);
+    return;
+  }
+
   throw new Error(`Unknown command: ${parsed.command}`);
 }
 
@@ -52,6 +58,15 @@ async function runGenerate(flags: Map<string, string[]>): Promise<void> {
   const output = firstFlag(flags, "output") ?? DEFAULT_OUTPUT;
   const prs = await loadPullRequests(flags);
   const candidates = deriveTasteCandidates(prs, { lambda });
+  const markdown = renderTasteMarkdown(candidates);
+  await writeFile(output, markdown, "utf8");
+}
+
+async function runDiscover(flags: Map<string, string[]>): Promise<void> {
+  const lambda = optionalNumber(flags, "lambda", 0.35);
+  const output = firstFlag(flags, "output") ?? DEFAULT_OUTPUT;
+  const repoPath = firstFlag(flags, "repo-path") ?? ".";
+  const candidates = await discoverGuidelineCandidates({ repoPath, lambda });
   const markdown = renderTasteMarkdown(candidates);
   await writeFile(output, markdown, "utf8");
 }
@@ -140,6 +155,7 @@ Commands:
   score --reward <n> --anchor-drift <n> [--lambda <n>]
   generate --input <prs.json> [--output taste.md] [--lambda <n>]
   generate --repo owner/name --pr 123 [--pr 456] [--output taste.md] [--lambda <n>]
+  discover --repo-path <path> [--output taste.md] [--lambda <n>]
 
 Formula:
   confidence = clamp01(reward - lambda * anchorDrift)

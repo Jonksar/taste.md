@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -76,4 +76,36 @@ test("generate command writes taste.md from local pull request evidence", async 
   assert.match(markdown, /## Prefer behavior tests/);
   assert.match(markdown, /Lambda: `0.250`/);
   assert.match(markdown, /Prefer behavior tests over tests that mirror implementation details\./);
+});
+
+test("discover command writes taste.md from local repository guidelines", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "taste-md-discover-"));
+  const repoPath = join(dir, "repo");
+  const guidelinesPath = join(repoPath, "guidelines");
+  const output = join(dir, "taste.md");
+  await mkdir(guidelinesPath, { recursive: true });
+  await writeFile(join(guidelinesPath, "GL008_security.md"), `# Security
+
+## Rules
+
+### GL008-R05. New controllers must carry \`[Authorize]\`
+
+When the API uses per-controller authorization, omitting the attribute exposes anonymous access.
+`);
+
+  await execFileAsync(process.execPath, [
+    cliPath.pathname,
+    "discover",
+    "--repo-path",
+    repoPath,
+    "--output",
+    output,
+    "--lambda",
+    "0.45",
+  ]);
+
+  const markdown = await readFile(output, "utf8");
+  assert.match(markdown, /## New controllers must carry \[Authorize\]/);
+  assert.match(markdown, /Lambda: `0.450`/);
+  assert.match(markdown, /guidelines\/GL008_security\.md/);
 });

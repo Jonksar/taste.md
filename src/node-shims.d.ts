@@ -1,9 +1,13 @@
 declare module "node:fs/promises" {
+  export function readdir(path: string | URL): Promise<string[]>;
   export function readFile(path: string | URL, encoding: string): Promise<string>;
   export function writeFile(path: string | URL, data: string, encoding?: string): Promise<void>;
 }
 
 declare module "node:path" {
+  export function basename(path: string): string;
+  export function join(...paths: string[]): string;
+  export function relative(from: string, to: string): string;
   export function resolve(...paths: string[]): string;
 }
 
