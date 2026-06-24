@@ -48,6 +48,11 @@ Output:
 node dist/cli.js generate --input prs.json --output taste.md
 ```
 
+The command writes two files:
+
+- `taste.md` — rule-only Markdown intended for `AGENTS.md` or `CLAUDE.md`
+- `taste_log.md` — confidence, formula inputs, evidence, and contradictions
+
 `prs.json` is an array of pull request evidence objects:
 
 ```json
@@ -84,23 +89,30 @@ GITHUB_TOKEN=... node dist/cli.js generate \
 The GitHub client fetches the pull request, changed files, reviews, review
 comments, and issue comments. `GH_TOKEN` is also supported.
 
-## Discover From Local Guidelines
+## Discover From Local Repository Markdown
 
 ```bash
 node dist/cli.js discover --repo-path ../fire --output fire.taste.md
 node dist/cli.js discover --repo-path ../ice --output ice.taste.md
 ```
 
-`discover` scans `guidelines/*.md` in the target repository and converts `###`
-rule headings into evidence-backed taste candidates. This is intentionally
-conservative: it uses the heading as the rule, the first paragraph as evidence,
-and scores committed guideline files as high-confidence project taste.
+`discover` scans Markdown in the target repository and skips existing
+`guidelines/` directories by default, so generated taste files are not just a
+copy of already-written guidelines. It extracts `###` rules and bold convention
+bullets from rule-like sections such as Testing, Coding Conventions, Known
+Footguns, and Rules.
+
+When `--output` ends in `taste.md`, the log file is written beside it by
+replacing that suffix with `taste_log.md`. For example, `fire.taste.md` produces
+`fire.taste_log.md`. Use `--log-output <path>` to choose a different log path.
 
 This repository includes clean-run examples generated from the local Reiterate
 workspace:
 
 - `examples/fire.taste.md`
+- `examples/fire.taste_log.md`
 - `examples/ice.taste.md`
+- `examples/ice.taste_log.md`
 
 ## Include From AGENTS.md Or CLAUDE.md
 

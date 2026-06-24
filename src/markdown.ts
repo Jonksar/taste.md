@@ -12,7 +12,30 @@ export function renderTasteMarkdown(
   const lines = [
     `# ${title}`,
     "",
-    "Generated taste preferences. Include this file from `AGENTS.md` or `CLAUDE.md` when you want agents to apply these evidence-backed project preferences.",
+  ];
+
+  if (candidates.length === 0) {
+    lines.push("No taste rules were generated.", "");
+    return lines.join("\n");
+  }
+
+  for (const candidate of candidates) {
+    lines.push(`- ${candidate.rule}`);
+  }
+  lines.push("");
+
+  return lines.join("\n");
+}
+
+export function renderTasteLogMarkdown(
+  candidates: TasteCandidate[],
+  options: RenderOptions = {},
+): string {
+  const title = options.title ?? "taste_log.md";
+  const lines = [
+    `# ${title}`,
+    "",
+    "Generated taste audit log. Keep this beside `taste.md` when you want to inspect confidence, evidence, and contradictions.",
     "",
     "Formula: `confidence = clamp01(reward - lambda * anchorDrift)`",
     "Lambda Semantic: `taste inertia`",

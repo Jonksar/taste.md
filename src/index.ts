@@ -9,7 +9,7 @@ export type {
 } from "./evidence.js";
 export { fetchPullRequestEvidence } from "./github.js";
 export type { FetchPullRequestParams } from "./github.js";
-export { discoverGuidelineCandidates } from "./guidelines.js";
-export type { DiscoverGuidelineOptions } from "./guidelines.js";
-export { renderTasteMarkdown } from "./markdown.js";
+export { discoverGuidelineCandidates, discoverRepositoryCandidates } from "./guidelines.js";
+export type { DiscoverGuidelineOptions, DiscoverRepositoryOptions } from "./guidelines.js";
+export { renderTasteLogMarkdown, renderTasteMarkdown } from "./markdown.js";
 export type { RenderOptions } from "./markdown.js";

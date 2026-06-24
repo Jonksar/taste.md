@@ -1,4 +1,11 @@
 declare module "node:fs/promises" {
+  export interface Dirent {
+    name: string;
+    isDirectory(): boolean;
+    isFile(): boolean;
+  }
+
+  export function readdir(path: string | URL, options: { withFileTypes: true }): Promise<Dirent[]>;
   export function readdir(path: string | URL): Promise<string[]>;
   export function readFile(path: string | URL, encoding: string): Promise<string>;
   export function writeFile(path: string | URL, data: string, encoding?: string): Promise<void>;

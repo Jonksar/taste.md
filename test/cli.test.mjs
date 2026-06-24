@@ -41,6 +41,7 @@ test("generate command writes taste.md from local pull request evidence", async 
   const dir = await mkdtemp(join(tmpdir(), "taste-md-"));
   const input = join(dir, "prs.json");
   const output = join(dir, "taste.md");
+  const logOutput = join(dir, "taste_log.md");
 
   await writeFile(input, JSON.stringify([
     {
@@ -72,18 +73,32 @@ test("generate command writes taste.md from local pull request evidence", async 
   ]);
 
   const markdown = await readFile(output, "utf8");
+  const logMarkdown = await readFile(logOutput, "utf8");
   assert.match(markdown, /^# taste\.md\n/);
-  assert.match(markdown, /## Prefer behavior tests/);
-  assert.match(markdown, /Lambda: `0.250`/);
-  assert.match(markdown, /Prefer behavior tests over tests that mirror implementation details\./);
+  assert.match(markdown, /^- Prefer behavior tests over tests that mirror implementation details\.$/m);
+  assert.doesNotMatch(markdown, /## Prefer behavior tests/);
+  assert.doesNotMatch(markdown, /Lambda: `0.250`/);
+  assert.doesNotMatch(markdown, /Evidence:/);
+  assert.match(logMarkdown, /^# taste_log\.md\n/);
+  assert.match(logMarkdown, /Lambda: `0.250`/);
+  assert.match(logMarkdown, /PR #42/);
 });
 
-test("discover command writes taste.md from local repository guidelines", async () => {
+test("discover command writes taste.md and taste_log.md from repository markdown excluding guidelines", async () => {
   const dir = await mkdtemp(join(tmpdir(), "taste-md-discover-"));
   const repoPath = join(dir, "repo");
   const guidelinesPath = join(repoPath, "guidelines");
   const output = join(dir, "taste.md");
+  const logOutput = join(dir, "taste_log.md");
   await mkdir(guidelinesPath, { recursive: true });
+  await writeFile(join(repoPath, "AGENTS.md"), `# Project
+
+## Testing
+
+### Prefer durable behavior tests
+
+Review observable behavior and outputs instead of implementation details.
+`);
   await writeFile(join(guidelinesPath, "GL008_security.md"), `# Security
 
 ## Rules
@@ -105,7 +120,14 @@ When the API uses per-controller authorization, omitting the attribute exposes a
   ]);
 
   const markdown = await readFile(output, "utf8");
-  assert.match(markdown, /## New controllers must carry \[Authorize\]/);
-  assert.match(markdown, /Lambda: `0.450`/);
-  assert.match(markdown, /guidelines\/GL008_security\.md/);
+  const logMarkdown = await readFile(logOutput, "utf8");
+  assert.match(markdown, /^- Prefer durable behavior tests\.$/m);
+  assert.doesNotMatch(markdown, /## Prefer durable behavior tests/);
+  assert.doesNotMatch(markdown, /Review observable behavior/);
+  assert.doesNotMatch(markdown, /New controllers must carry \[Authorize\]/);
+  assert.doesNotMatch(markdown, /Lambda: `0.450`/);
+  assert.match(logMarkdown, /Lambda: `0.450`/);
+  assert.match(logMarkdown, /Review observable behavior/);
+  assert.match(logMarkdown, /AGENTS\.md/);
+  assert.doesNotMatch(logMarkdown, /guidelines\/GL008_security\.md/);
 });

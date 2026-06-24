@@ -5,8 +5,8 @@ import { argv, env, exit, stderr, stdout } from "node:process";
 import { deriveTasteCandidates, type PullRequestEvidence } from "./evidence.js";
 import { calculateConfidence } from "./formula.js";
 import { fetchPullRequestEvidence } from "./github.js";
-import { discoverGuidelineCandidates } from "./guidelines.js";
-import { renderTasteMarkdown } from "./markdown.js";
+import { discoverRepositoryCandidates } from "./guidelines.js";
+import { renderTasteLogMarkdown, renderTasteMarkdown } from "./markdown.js";
 
 const DEFAULT_OUTPUT = "taste.md";
 
@@ -56,19 +56,19 @@ function runScore(flags: Map<string, string[]>): void {
 async function runGenerate(flags: Map<string, string[]>): Promise<void> {
   const lambda = optionalNumber(flags, "lambda", 0.35);
   const output = firstFlag(flags, "output") ?? DEFAULT_OUTPUT;
+  const logOutput = resolveLogOutput(output, firstFlag(flags, "log-output"));
   const prs = await loadPullRequests(flags);
   const candidates = deriveTasteCandidates(prs, { lambda });
-  const markdown = renderTasteMarkdown(candidates);
-  await writeFile(output, markdown, "utf8");
+  await writeTasteArtifacts(candidates, output, logOutput);
 }
 
 async function runDiscover(flags: Map<string, string[]>): Promise<void> {
   const lambda = optionalNumber(flags, "lambda", 0.35);
   const output = firstFlag(flags, "output") ?? DEFAULT_OUTPUT;
+  const logOutput = resolveLogOutput(output, firstFlag(flags, "log-output"));
   const repoPath = firstFlag(flags, "repo-path") ?? ".";
-  const candidates = await discoverGuidelineCandidates({ repoPath, lambda });
-  const markdown = renderTasteMarkdown(candidates);
-  await writeFile(output, markdown, "utf8");
+  const candidates = await discoverRepositoryCandidates({ repoPath, lambda });
+  await writeTasteArtifacts(candidates, output, logOutput);
 }
 
 async function loadPullRequests(flags: Map<string, string[]>): Promise<PullRequestEvidence[]> {
@@ -148,14 +148,31 @@ function parseRequiredInteger(value: string, label: string): number {
   return parsed;
 }
 
+async function writeTasteArtifacts(
+  candidates: ReturnType<typeof deriveTasteCandidates>,
+  output: string,
+  logOutput: string,
+): Promise<void> {
+  await writeFile(output, renderTasteMarkdown(candidates), "utf8");
+  await writeFile(logOutput, renderTasteLogMarkdown(candidates), "utf8");
+}
+
+function resolveLogOutput(output: string, explicitLogOutput: string | undefined): string {
+  if (explicitLogOutput) return explicitLogOutput;
+  if (output.endsWith(DEFAULT_OUTPUT)) {
+    return `${output.slice(0, -DEFAULT_OUTPUT.length)}taste_log.md`;
+  }
+  return `${output}.log.md`;
+}
+
 function helpText(): string {
   return `taste-md
 
 Commands:
   score --reward <n> --anchor-drift <n> [--lambda <n>]
-  generate --input <prs.json> [--output taste.md] [--lambda <n>]
-  generate --repo owner/name --pr 123 [--pr 456] [--output taste.md] [--lambda <n>]
-  discover --repo-path <path> [--output taste.md] [--lambda <n>]
+  generate --input <prs.json> [--output taste.md] [--log-output taste_log.md] [--lambda <n>]
+  generate --repo owner/name --pr 123 [--pr 456] [--output taste.md] [--log-output taste_log.md] [--lambda <n>]
+  discover --repo-path <path> [--output taste.md] [--log-output taste_log.md] [--lambda <n>]
 
 Formula:
   confidence = clamp01(reward - lambda * anchorDrift)
