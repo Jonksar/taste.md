@@ -391,6 +391,23 @@ test("indexRepository filters source kinds", async () => {
   );
 });
 
+test("indexRepository does not recount absent narrowed sources on repeated runs", async () => {
+  const { corpus } = await tempCorpusWithSource([sampleInput()]);
+
+  await corpus.indexRepository("acme/widgets");
+  await corpus.indexRepository("acme/widgets", {
+    sourceKinds: ["pr_body"],
+  });
+  const third = await corpus.indexRepository("acme/widgets", {
+    sourceKinds: ["pr_body"],
+  });
+
+  assert.equal(third.pullRequestsSeen, 1);
+  assert.equal(third.pullRequestsIndexed, 0);
+  assert.equal(third.sourcesIndexed, 0);
+  assert.equal(third.skippedUnchanged, 1);
+});
+
 test("indexRepository enforces maxPullRequests even when the source yields more", async () => {
   const inputs = Array.from({ length: 4 }, (_, index) => {
     const number = index + 1;

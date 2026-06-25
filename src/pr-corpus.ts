@@ -787,8 +787,36 @@ class LibsqlPullRequestCorpus implements PullRequestCorpus {
       pullRequest: filtered.pullRequest,
       unchanged,
       changed,
-      dropped: filtered.dropped,
+      dropped: await this.selectExistingStoredSources(filtered.dropped),
     };
+  }
+
+  private async selectExistingStoredSources(
+    sources: PullRequestSourceIdentity[],
+  ): Promise<PullRequestSourceIdentity[]> {
+    const existing: PullRequestSourceIdentity[] = [];
+
+    for (const source of sources) {
+      const result = await this.client.execute({
+        sql: `SELECT 1
+          FROM pr_sources
+          WHERE repo_full_name = ?
+            AND pr_number = ?
+            AND source_kind = ?
+            AND source_id = ?`,
+        args: [
+          source.repoFullName,
+          source.prNumber,
+          source.sourceKind,
+          source.sourceId,
+        ],
+      });
+      if (result.rows.length > 0) {
+        existing.push(source);
+      }
+    }
+
+    return existing;
   }
 
   private async embedSources(
