@@ -510,6 +510,66 @@ test("indexRepository rejects supplied source documents that target another PR i
   assert.deepEqual(foreignSources.rows, []);
 });
 
+test("indexRepository rejects yielded pull requests whose repository identity does not match the requested repository", async () => {
+  const embeddedTexts = [];
+  const dir = await mkdtemp(join(tmpdir(), "taste-corpus-"));
+  const database = { url: `file:${join(dir, "corpus.db")}` };
+  const corpus = createPullRequestCorpus({
+    database,
+    embeddings: {
+      ...fakeEmbeddings(),
+      async embedDocuments(texts) {
+        embeddedTexts.push(...texts);
+        return texts.map((text) => fakeVector(text, 3));
+      },
+    },
+    github: {
+      async *listPullRequests() {
+        yield sampleInput({
+          repository: {
+            provider: "github",
+            fullName: "evil/widgets",
+            owner: "evil",
+            name: "widgets",
+          },
+        });
+        yield sampleInput({
+          pullRequest: {
+            ...sampleInput().pullRequest,
+            number: 43,
+            repoFullName: "evil/widgets",
+            url: "https://github.com/evil/widgets/pull/43",
+          },
+        });
+      },
+    },
+    privacy: localEmbeddingPrivacy(),
+  });
+  await corpus.initialize();
+
+  const result = await corpus.indexRepository("acme/widgets");
+  const client = createClient(database);
+  const storedPullRequests = await client.execute(
+    "SELECT repo_full_name, number FROM pull_requests ORDER BY number",
+  );
+
+  assert.equal(result.pullRequestsSeen, 0);
+  assert.equal(result.pullRequestsIndexed, 0);
+  assert.equal(result.sourcesIndexed, 0);
+  assert.equal(result.failures.length, 2);
+  assert.equal(result.failures[0].stage, "database");
+  assert.match(result.failures[0].message, /requested repository|fullName/i);
+  assert.equal(result.failures[1].stage, "database");
+  assert.match(result.failures[1].message, /requested repository|fullName/i);
+  assert.deepEqual(embeddedTexts, []);
+  assert.deepEqual(
+    storedPullRequests.rows.map((row) => [row.repo_full_name, row.number]),
+    [],
+  );
+  assert.equal(await corpus.getPullRequest("acme/widgets", 42), undefined);
+  assert.equal(await corpus.getPullRequest("acme/widgets", 43), undefined);
+});
+
 test("indexRepository does not recount absent narrowed sources on repeated runs", async () => {
   const { corpus } = await tempCorpusWithSource([sampleInput()]);
 

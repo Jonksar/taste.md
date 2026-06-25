@@ -483,6 +483,17 @@ class LibsqlPullRequestCorpus implements PullRequestCorpus {
       for await (const input of this.github.listPullRequests(fullName, githubOptions)) {
         if (fetched >= maxPullRequests) break;
         fetched += 1;
+        try {
+          assertRequestedRepositoryIdentity(fullName, input);
+        } catch (error) {
+          result.failures.push({
+            repoFullName: fullName,
+            prNumber: input.pullRequest.number,
+            stage: "database",
+            message: errorMessage(error),
+          });
+          continue;
+        }
         if (!isPullRequestUpdatedSince(input.pullRequest, options.since)) continue;
         result.pullRequestsSeen += 1;
 
@@ -1415,6 +1426,22 @@ function assertProvidedSourceIdentity(input: PullRequestCorpusInput): void {
         "Supplied source document repoFullName and prNumber must match pullRequest identity.",
       );
     }
+  }
+}
+
+function assertRequestedRepositoryIdentity(
+  requestedFullName: string,
+  input: PullRequestCorpusInput,
+): void {
+  if (input.repository.fullName !== requestedFullName) {
+    throw new Error(
+      `GitHub source yielded repository ${input.repository.fullName} for requested repository ${requestedFullName}.`,
+    );
+  }
+  if (input.pullRequest.repoFullName !== requestedFullName) {
+    throw new Error(
+      `GitHub source yielded pull request repository ${input.pullRequest.repoFullName} for requested repository ${requestedFullName}.`,
+    );
   }
 }
 
