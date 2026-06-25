@@ -1169,30 +1169,19 @@ function sourceIdentity(source: PullRequestSourceDocument): PullRequestSourceIde
   };
 }
 
-function selectedSourceDefinitions(
-  input: PullRequestCorpusInput,
-  sourceKinds: PullRequestSourceKind[] = DEFAULT_SOURCE_KINDS,
-): Array<PullRequestSourceDefinition & { text: string }> {
-  const selected = new Set(sourceKinds);
-  return PR_METADATA_SOURCE_DEFINITIONS
-    .filter((definition) => selected.has(definition.sourceKind))
-    .map((definition) => ({
-      ...definition,
-      text: input.pullRequest[definition.pullRequestField],
-    }));
-}
-
 function selectedSourceIdentities(
   input: PullRequestCorpusInput,
   sourceKinds: PullRequestSourceKind[] = DEFAULT_SOURCE_KINDS,
 ): PullRequestSourceIdentity[] {
-  const identities: PullRequestSourceIdentity[] = selectedSourceDefinitions(input, sourceKinds).map((definition) => ({
-    repoFullName: input.pullRequest.repoFullName,
-    prNumber: input.pullRequest.number,
-    sourceKind: definition.sourceKind,
-    sourceId: definition.sourceId,
-  }));
   const selected = new Set(sourceKinds);
+  const identities: PullRequestSourceIdentity[] = PR_METADATA_SOURCE_DEFINITIONS
+    .filter((definition) => selected.has(definition.sourceKind))
+    .map((definition) => ({
+      repoFullName: input.pullRequest.repoFullName,
+      prNumber: input.pullRequest.number,
+      sourceKind: definition.sourceKind,
+      sourceId: definition.sourceId,
+    }));
 
   for (const source of input.sources) {
     if (!selected.has(source.sourceKind)) continue;
@@ -1289,7 +1278,14 @@ function isRemoteDatabaseUrl(url: string): boolean {
 }
 
 function isCleartextRemoteDatabaseUrl(url: string): boolean {
-  return /^(?:http|ws):/i.test(url);
+  if (/^(?:http|ws):/i.test(url)) return true;
+  if (!/^(?:libsql|turso):/i.test(url)) return false;
+
+  try {
+    return new URL(url).searchParams.getAll("tls").includes("0");
+  } catch {
+    return false;
+  }
 }
 
 function boundedLimit(value: number | undefined, fallback: number): number {
@@ -1601,5 +1597,3 @@ function optionalString(value: unknown): string | undefined {
 function optionalNumber(value: unknown): number | undefined {
   return value === null || value === undefined ? undefined : Number(value);
 }
-
-void normalizeSearchQuery;

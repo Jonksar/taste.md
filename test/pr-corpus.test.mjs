@@ -326,6 +326,16 @@ test("remote database detection rejects cleartext http and ws after remote opt-i
   );
 });
 
+test("remote database detection rejects libsql tls=0 after remote opt-in without insecure override", () => {
+  assert.throws(
+    () => createPullRequestCorpus({
+      database: { url: "libsql://localhost:8080?tls=0" },
+      privacy: { allowRemoteDatabase: true, warn() {} },
+    }),
+    /allowInsecureRemoteDatabase/,
+  );
+});
+
 test("remote database detection warns only after explicit remote opt-in", () => {
   for (const url of [
     "https://example.test/corpus",
