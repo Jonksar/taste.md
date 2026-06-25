@@ -300,3 +300,339 @@ test("embedding provider location must be local or explicitly acknowledged", () 
     },
   }));
 });
+
+function fakePullRequestSource(inputs) {
+  return {
+    async *listPullRequests(repoFullName) {
+      for (const input of inputs) {
+        if (input.repository.fullName === repoFullName) yield input;
+      }
+    },
+  };
+}
+
+async function tempCorpusWithSource(inputs, dimensions = 3) {
+  const dir = await mkdtemp(join(tmpdir(), "taste-corpus-"));
+  const corpus = createPullRequestCorpus({
+    database: { url: `file:${join(dir, "corpus.db")}` },
+    embeddings: fakeEmbeddings(dimensions),
+    github: fakePullRequestSource(inputs),
+    privacy: localEmbeddingPrivacy(),
+  });
+  await corpus.initialize();
+  return corpus;
+}
+
+test("indexRepository stores PR metadata and indexes title and body sources", async () => {
+  const corpus = await tempCorpusWithSource([sampleInput()]);
+
+  const result = await corpus.indexRepository("acme/widgets");
+
+  assert.equal(result.repositories, 1);
+  assert.equal(result.pullRequestsSeen, 1);
+  assert.equal(result.pullRequestsIndexed, 1);
+  assert.equal(result.sourcesIndexed, 2);
+  assert.equal(result.failures.length, 0);
+  assert.equal((await corpus.listPullRequests("acme/widgets")).length, 1);
+});
+
+test("indexRepository upserts an empty repository before paging", async () => {
+  const corpus = await tempCorpusWithSource([]);
+
+  const result = await corpus.indexRepository("acme/empty");
+  const repository = await corpus.getRepository("acme/empty");
+
+  assert.equal(result.repositories, 1);
+  assert.equal(result.pullRequestsSeen, 0);
+  assert.equal((await corpus.listRepositories()).length, 1);
+  assert.equal(repository?.fullName, "acme/empty");
+  assert.equal(repository?.owner, "acme");
+  assert.equal(repository?.name, "empty");
+});
+
+test("indexRepository skips unchanged sources on repeated runs", async () => {
+  const corpus = await tempCorpusWithSource([sampleInput()]);
+
+  await corpus.indexRepository("acme/widgets");
+  const second = await corpus.indexRepository("acme/widgets");
+
+  assert.equal(second.pullRequestsSeen, 1);
+  assert.equal(second.pullRequestsIndexed, 0);
+  assert.equal(second.skippedUnchanged, 2);
+});
+
+test("indexRepository filters source kinds", async () => {
+  const corpus = await tempCorpusWithSource([sampleInput()]);
+
+  const result = await corpus.indexRepository("acme/widgets", {
+    sourceKinds: ["pr_body"],
+  });
+
+  assert.equal(result.sourcesIndexed, 1);
+});
+
+test("indexRepository enforces maxPullRequests even when the source yields more", async () => {
+  const inputs = Array.from({ length: 4 }, (_, index) => {
+    const number = index + 1;
+    return sampleInput({
+      pullRequest: {
+        ...sampleInput().pullRequest,
+        number,
+        url: `https://github.com/acme/widgets/pull/${number}`,
+        title: `Change ${number}`,
+        body: `Body ${number}`,
+      },
+    });
+  });
+  const corpus = await tempCorpusWithSource(inputs);
+
+  const result = await corpus.indexRepository("acme/widgets", { maxPullRequests: 2 });
+
+  assert.equal(result.pullRequestsSeen, 2);
+  assert.equal(result.pullRequestsIndexed, 2);
+  assert.equal((await corpus.listPullRequests("acme/widgets")).length, 2);
+  assert.equal(await corpus.getPullRequest("acme/widgets", 3), undefined);
+});
+
+test("indexRepository with since skips older normalized pull requests", async () => {
+  const oldPr = sampleInput({
+    pullRequest: {
+      ...sampleInput().pullRequest,
+      number: 41,
+      url: "https://github.com/acme/widgets/pull/41",
+      title: "Older change",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    },
+  });
+  const newPr = sampleInput({
+    pullRequest: {
+      ...sampleInput().pullRequest,
+      number: 43,
+      url: "https://github.com/acme/widgets/pull/43",
+      title: "Newer change",
+      updatedAt: "2026-02-01T00:00:00.000Z",
+    },
+  });
+  const corpus = await tempCorpusWithSource([oldPr, newPr]);
+
+  const result = await corpus.indexRepository("acme/widgets", {
+    since: "2026-01-15T00:00:00.000Z",
+  });
+
+  assert.equal(result.pullRequestsSeen, 1);
+  assert.equal(await corpus.getPullRequest("acme/widgets", 41), undefined);
+  assert.equal((await corpus.getPullRequest("acme/widgets", 43))?.number, 43);
+});
+
+test("indexRepositories continues after one repo fails", async () => {
+  const source = {
+    async *listPullRequests(repoFullName) {
+      if (repoFullName === "acme/broken") throw new Error("gh failed");
+      yield sampleInput();
+    },
+  };
+  const dir = await mkdtemp(join(tmpdir(), "taste-corpus-"));
+  const corpus = createPullRequestCorpus({
+    database: { url: `file:${join(dir, "corpus.db")}` },
+    embeddings: fakeEmbeddings(),
+    github: source,
+    privacy: localEmbeddingPrivacy(),
+  });
+  await corpus.initialize();
+
+  const result = await corpus.indexRepositories({
+    repositories: ["acme/broken", "acme/widgets"],
+  });
+
+  assert.equal(result.repositories, 1);
+  assert.equal(result.failures.length, 1);
+  assert.equal(result.failures[0].stage, "github");
+});
+
+test("indexRepository upserts but does not count a repository when GitHub paging fails", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "taste-corpus-"));
+  const corpus = createPullRequestCorpus({
+    database: { url: `file:${join(dir, "corpus.db")}` },
+    embeddings: fakeEmbeddings(),
+    github: {
+      async *listPullRequests() {
+        throw new Error("gh failed");
+      },
+    },
+    privacy: localEmbeddingPrivacy(),
+  });
+  await corpus.initialize();
+
+  const result = await corpus.indexRepository("acme/broken");
+
+  assert.equal(result.repositories, 0);
+  assert.equal(result.failures.length, 1);
+  assert.equal(result.failures[0].stage, "github");
+  assert.equal((await corpus.getRepository("acme/broken"))?.fullName, "acme/broken");
+});
+
+test("indexRepository does not persist PR metadata when embedding fails", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "taste-corpus-"));
+  const corpus = createPullRequestCorpus({
+    database: { url: `file:${join(dir, "corpus.db")}` },
+    embeddings: {
+      ...fakeEmbeddings(),
+      async embedDocuments() {
+        throw new Error("embedding failed");
+      },
+    },
+    github: fakePullRequestSource([sampleInput()]),
+    privacy: localEmbeddingPrivacy(),
+  });
+  await corpus.initialize();
+
+  const result = await corpus.indexRepository("acme/widgets");
+
+  assert.equal(result.failures.length, 1);
+  assert.equal(result.failures[0].stage, "embedding");
+  assert.equal(await corpus.getPullRequest("acme/widgets", 42), undefined);
+});
+
+test("indexRepository filters source text before embedding", async () => {
+  const embeddedTexts = [];
+  const secretInput = sampleInput({
+    pullRequest: {
+      ...sampleInput().pullRequest,
+      title: "secret-token title",
+      body: "contains secret-token",
+    },
+  });
+  const dir = await mkdtemp(join(tmpdir(), "taste-corpus-"));
+  const corpus = createPullRequestCorpus({
+    database: { url: `file:${join(dir, "corpus.db")}` },
+    embeddings: {
+      ...fakeEmbeddings(),
+      async embedDocuments(texts) {
+        embeddedTexts.push(...texts);
+        return texts.map((text) => fakeVector(text, 3));
+      },
+    },
+    github: fakePullRequestSource([secretInput]),
+    privacy: localEmbeddingPrivacy({
+      sourceTextFilter(text) {
+        return text.replaceAll("secret-token", "[redacted]");
+      },
+    }),
+  });
+  await corpus.initialize();
+
+  await corpus.indexRepository("acme/widgets");
+
+  const stored = await corpus.getPullRequest("acme/widgets", 42);
+  const listed = await corpus.listPullRequests("acme/widgets");
+  assert.equal(embeddedTexts.some((text) => text.includes("secret-token")), false);
+  assert.equal(embeddedTexts.some((text) => text.includes("[redacted]")), true);
+  assert.equal(JSON.stringify(stored).includes("secret-token"), false);
+  assert.equal(JSON.stringify(listed).includes("secret-token"), false);
+  assert.equal(JSON.stringify(stored).includes("[redacted]"), true);
+});
+
+test("indexRepository batches all changed source chunks for one PR in one embedding call", async () => {
+  const embeddingBatches = [];
+  const dir = await mkdtemp(join(tmpdir(), "taste-corpus-"));
+  const corpus = createPullRequestCorpus({
+    database: { url: `file:${join(dir, "corpus.db")}` },
+    embeddings: {
+      ...fakeEmbeddings(),
+      async embedDocuments(texts) {
+        embeddingBatches.push([...texts]);
+        return texts.map((text) => fakeVector(text, 3));
+      },
+    },
+    github: fakePullRequestSource([sampleInput()]),
+    privacy: localEmbeddingPrivacy(),
+  });
+  await corpus.initialize();
+
+  const result = await corpus.indexRepository("acme/widgets");
+
+  assert.equal(result.sourcesIndexed, 2);
+  assert.equal(embeddingBatches.length, 1);
+  assert.deepEqual(embeddingBatches[0], [
+    "Retry failed uploads",
+    "Adds retry handling for transient upload failures.",
+  ]);
+});
+
+test("sourceTextFilter receives a frozen source clone and cannot rewrite stored source identity", async () => {
+  let sawFrozenSource = false;
+  const dir = await mkdtemp(join(tmpdir(), "taste-corpus-"));
+  const database = { url: `file:${join(dir, "corpus.db")}` };
+  const corpus = createPullRequestCorpus({
+    database,
+    embeddings: fakeEmbeddings(),
+    github: fakePullRequestSource([sampleInput()]),
+    privacy: localEmbeddingPrivacy({
+      sourceTextFilter(text, source) {
+        sawFrozenSource ||= Object.isFrozen(source);
+        try {
+          source.repoFullName = "evil/repo";
+          source.prNumber = 999;
+          source.sourceKind = "changed_file";
+          source.sourceId = "changed";
+        } catch {
+          // Frozen sources throw under ESM strict mode.
+        }
+        return text.replaceAll("Retry", "Retried");
+      },
+    }),
+  });
+  await corpus.initialize();
+
+  await corpus.indexRepository("acme/widgets");
+  const stored = await corpus.getPullRequest("acme/widgets", 42);
+  const client = createClient(database);
+  const sources = await client.execute(
+    "SELECT repo_full_name, pr_number, source_kind, source_id, text FROM pr_sources ORDER BY source_kind, source_id",
+  );
+
+  assert.equal(sawFrozenSource, true);
+  assert.equal(stored?.title.includes("Retried"), true);
+  assert.equal(sources.rows.some((row) => row.repo_full_name === "evil/repo"), false);
+  assert.equal(sources.rows.some((row) => row.pr_number === 999), false);
+  assert.equal(sources.rows.some((row) => row.source_kind === "changed_file"), false);
+  assert.equal(sources.rows.some((row) => (
+    row.repo_full_name === "acme/widgets"
+    && row.pr_number === 42
+    && row.source_kind === "pr_title"
+    && String(row.text).includes("Retried")
+  )), true);
+});
+
+test("indexRepository re-embeds unchanged content when embedding model changes", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "taste-corpus-"));
+  const database = { url: `file:${join(dir, "corpus.db")}` };
+  const first = createPullRequestCorpus({
+    database,
+    embeddings: fakeEmbeddings(3, "fake-a"),
+    github: fakePullRequestSource([sampleInput()]),
+    privacy: localEmbeddingPrivacy(),
+  });
+  await first.initialize();
+  await first.indexRepository("acme/widgets");
+
+  let embedCalls = 0;
+  const second = createPullRequestCorpus({
+    database,
+    embeddings: {
+      ...fakeEmbeddings(3, "fake-b"),
+      async embedDocuments(texts) {
+        embedCalls += 1;
+        return texts.map((text) => fakeVector(text, 3));
+      },
+    },
+    github: fakePullRequestSource([sampleInput()]),
+    privacy: localEmbeddingPrivacy(),
+  });
+  await second.initialize();
+
+  const result = await second.indexRepository("acme/widgets");
+
+  assert.equal(result.sourcesIndexed, 2);
+  assert.equal(embedCalls > 0, true);
+});

@@ -6,6 +6,7 @@ import {
   type Client,
   type InArgs,
   type InStatement,
+  type Transaction,
 } from "@libsql/client";
 
 export const PULL_REQUEST_SOURCE_KINDS = [
@@ -199,6 +200,17 @@ interface PullRequestSourceDefinition {
 interface CorpusSqlExecutor {
   execute(statement: InStatement): ReturnType<Client["execute"]>;
 }
+
+interface PreparedSource {
+  source: PullRequestSourceDocument;
+  chunks: string[];
+  vectors: number[][];
+}
+
+type PullRequestSourceIdentity = Pick<
+  PullRequestSourceDocument,
+  "repoFullName" | "prNumber" | "sourceKind" | "sourceId"
+>;
 
 const PR_METADATA_SOURCE_DEFINITIONS: readonly PullRequestSourceDefinition[] = [
   { sourceKind: "pr_title", sourceId: "title", pullRequestField: "title" },
@@ -427,16 +439,137 @@ class LibsqlPullRequestCorpus implements PullRequestCorpus {
   }
 
   async indexRepository(
-    _fullName: string,
-    _options: IndexRepositoryOptions = {},
+    fullName: string,
+    options: IndexRepositoryOptions = {},
   ): Promise<IndexingResult> {
-    void this.github;
-    void this.chunking;
-    throw new Error("indexRepository is not implemented until Task 3.");
+    assertValidRepoFullName(fullName);
+    if (!this.github) {
+      throw new Error("indexRepository requires a GitHubPullRequestSource.");
+    }
+    const embeddings = this.requireEmbeddings("indexRepository");
+
+    const result = emptyIndexingResult();
+    try {
+      await this.upsertRepository(repositoryFromFullName(fullName));
+    } catch (error) {
+      result.failures.push({
+        repoFullName: fullName,
+        stage: "database",
+        message: errorMessage(error),
+      });
+      return result;
+    }
+
+    try {
+      let fetched = 0;
+      const maxPullRequests = boundedTotalPullRequests(options.maxPullRequests);
+      const githubOptions: GitHubPullRequestListOptions = {
+        state: options.state,
+        since: options.since,
+        pageSize: boundedPageSize(options.pageSize),
+        maxPullRequests,
+      };
+      for await (const input of this.github.listPullRequests(fullName, githubOptions)) {
+        if (fetched >= maxPullRequests) break;
+        fetched += 1;
+        if (!isPullRequestUpdatedSince(input.pullRequest, options.since)) continue;
+        result.pullRequestsSeen += 1;
+
+        let changedSources: PullRequestSourceDocument[];
+        let filteredPullRequest: PullRequestRecord;
+        let droppedSources: PullRequestSourceIdentity[];
+        try {
+          const prepared = await this.prepareChangedSources(
+            input,
+            options.sourceKinds,
+            embeddings,
+          );
+          filteredPullRequest = prepared.pullRequest;
+          result.skippedUnchanged += prepared.unchanged;
+          changedSources = prepared.changed;
+          droppedSources = prepared.dropped;
+        } catch (error) {
+          result.failures.push({
+            repoFullName: fullName,
+            prNumber: input.pullRequest.number,
+            stage: "database",
+            message: errorMessage(error),
+          });
+          continue;
+        }
+
+        let preparedSources: PreparedSource[];
+        try {
+          preparedSources = await this.embedSources(changedSources, embeddings);
+        } catch (error) {
+          result.failures.push({
+            repoFullName: fullName,
+            prNumber: input.pullRequest.number,
+            stage: "embedding",
+            message: errorMessage(error),
+          });
+          continue;
+        }
+
+        try {
+          await this.persistPullRequestTransaction(
+            input,
+            filteredPullRequest,
+            preparedSources,
+            droppedSources,
+            embeddings,
+          );
+        } catch (error) {
+          result.failures.push({
+            repoFullName: fullName,
+            prNumber: input.pullRequest.number,
+            stage: "database",
+            message: errorMessage(error),
+          });
+          continue;
+        }
+
+        if (preparedSources.length > 0 || droppedSources.length > 0) {
+          result.pullRequestsIndexed += 1;
+        }
+        result.sourcesIndexed += preparedSources.length;
+        result.chunksIndexed += preparedSources.reduce(
+          (sum, source) => sum + source.chunks.length,
+          0,
+        );
+      }
+    } catch (error) {
+      result.failures.push({
+        repoFullName: fullName,
+        stage: "github",
+        message: errorMessage(error),
+      });
+      return result;
+    }
+
+    result.repositories = 1;
+
+    try {
+      await this.markRepositoryIndexed(fullName);
+    } catch (error) {
+      result.failures.push({
+        repoFullName: fullName,
+        stage: "database",
+        message: errorMessage(error),
+      });
+    }
+    return result;
   }
 
-  async indexRepositories(_options: IndexRepositoriesOptions): Promise<IndexingResult> {
-    throw new Error("indexRepositories is not implemented until Task 3.");
+  async indexRepositories(options: IndexRepositoriesOptions): Promise<IndexingResult> {
+    const combined = emptyIndexingResult();
+    const { repositories, ...indexOptions } = options;
+    for (const repo of repositories) {
+      assertValidRepoFullName(repo);
+      const result = await this.indexRepository(repo, indexOptions);
+      mergeIndexingResult(combined, result);
+    }
+    return combined;
   }
 
   async searchPullRequests(
@@ -447,28 +580,41 @@ class LibsqlPullRequestCorpus implements PullRequestCorpus {
 
   private preparePullRequestSourceSet(
     input: PullRequestCorpusInput,
-    sourceKinds: PullRequestSourceKind[] = DEFAULT_SOURCE_KINDS,
+    sourceKinds: PullRequestSourceKind[] | undefined,
   ): {
     pullRequest: PullRequestRecord;
     sources: PullRequestSourceDocument[];
+    dropped: PullRequestSourceIdentity[];
   } {
-    const selected = new Set(sourceKinds);
+    const selected = new Set(sourceKinds ?? DEFAULT_SOURCE_KINDS);
+    const selectedIdentities = new Map(
+      selectedSourceIdentities(input, sourceKinds).map((source) => [
+        sourceIdentityKey(source),
+        source,
+      ]),
+    );
     const filteredTextByField = new Map<PullRequestMetadataField, string>();
     const sources: PullRequestSourceDocument[] = [];
+    const dropped: PullRequestSourceIdentity[] = [];
 
     for (const rawSource of createPullRequestSources(input, ["pr_title", "pr_body"])) {
       const filtered = this.filterSourceText(rawSource);
       const field = PR_METADATA_FIELD_BY_KIND.get(
         rawSource.sourceKind as Extract<PullRequestSourceKind, "pr_title" | "pr_body">,
       );
-      if (filtered && field) {
-        filteredTextByField.set(field, filtered.text);
-      }
-      if (filtered && selected.has(rawSource.sourceKind)) {
+      if (filtered && field) filteredTextByField.set(field, filtered.text);
+
+      if (!selected.has(rawSource.sourceKind)) continue;
+
+      selectedIdentities.delete(sourceIdentityKey(rawSource));
+      if (filtered) {
         sources.push(filtered);
+      } else {
+        dropped.push(sourceIdentity(rawSource));
       }
     }
 
+    dropped.push(...selectedIdentities.values());
     return {
       pullRequest: {
         ...input.pullRequest,
@@ -476,6 +622,7 @@ class LibsqlPullRequestCorpus implements PullRequestCorpus {
         body: filteredTextByField.get("body") ?? "",
       },
       sources,
+      dropped,
     };
   }
 
@@ -563,6 +710,217 @@ class LibsqlPullRequestCorpus implements PullRequestCorpus {
       args: [key, value],
     });
   }
+
+  private requireEmbeddings(operation: string): EmbeddingProvider {
+    if (!this.embeddings) {
+      throw new Error(`${operation} requires an embedding provider.`);
+    }
+    return this.embeddings;
+  }
+
+  private async isSourceUnchangedForCurrentModel(
+    source: PullRequestSourceDocument,
+    embeddings: EmbeddingProvider,
+  ): Promise<boolean> {
+    const existing = await this.client.execute({
+      sql: `SELECT 1
+        FROM pr_sources sources
+        WHERE sources.repo_full_name = ?
+          AND sources.pr_number = ?
+          AND sources.source_kind = ?
+          AND sources.source_id = ?
+          AND sources.content_hash = ?
+          AND EXISTS (
+            SELECT 1
+            FROM pr_source_chunks chunks
+            WHERE chunks.repo_full_name = sources.repo_full_name
+              AND chunks.pr_number = sources.pr_number
+              AND chunks.source_kind = sources.source_kind
+              AND chunks.source_id = sources.source_id
+              AND chunks.content_hash = sources.content_hash
+              AND chunks.embedding_model = ?
+          )`,
+      args: [
+        source.repoFullName,
+        source.prNumber,
+        source.sourceKind,
+        source.sourceId,
+        source.contentHash,
+        embeddings.model,
+      ],
+    });
+    return existing.rows.length > 0;
+  }
+
+  private async prepareChangedSources(
+    input: PullRequestCorpusInput,
+    sourceKinds: PullRequestSourceKind[] | undefined,
+    embeddings: EmbeddingProvider,
+  ): Promise<{
+    pullRequest: PullRequestRecord;
+    unchanged: number;
+    changed: PullRequestSourceDocument[];
+    dropped: PullRequestSourceIdentity[];
+  }> {
+    const filtered = this.preparePullRequestSourceSet(input, sourceKinds);
+    const changed: PullRequestSourceDocument[] = [];
+    let unchanged = 0;
+
+    for (const source of filtered.sources) {
+      if (await this.isSourceUnchangedForCurrentModel(source, embeddings)) {
+        unchanged += 1;
+        continue;
+      }
+      changed.push(source);
+    }
+
+    return {
+      pullRequest: filtered.pullRequest,
+      unchanged,
+      changed,
+      dropped: filtered.dropped,
+    };
+  }
+
+  private async embedSources(
+    sources: PullRequestSourceDocument[],
+    embeddings: EmbeddingProvider,
+  ): Promise<PreparedSource[]> {
+    const preparedWithoutVectors = sources.map((source) => ({
+      source,
+      chunks: chunkText(source.text, this.chunking),
+    }));
+    const allChunks = preparedWithoutVectors.flatMap((source) => source.chunks);
+    const allVectors = allChunks.length === 0
+      ? []
+      : await embeddings.embedDocuments(allChunks);
+    assertVectorDimensions(allVectors, embeddings.dimensions);
+
+    let offset = 0;
+    return preparedWithoutVectors.map(({ source, chunks }) => {
+      const vectors = allVectors.slice(offset, offset + chunks.length);
+      offset += chunks.length;
+      return { source, chunks, vectors };
+    });
+  }
+
+  private async persistPullRequestTransaction(
+    input: PullRequestCorpusInput,
+    pullRequest: PullRequestRecord,
+    preparedSources: PreparedSource[],
+    droppedSources: PullRequestSourceIdentity[],
+    embeddings: EmbeddingProvider,
+  ): Promise<void> {
+    if (input.repository.fullName !== input.pullRequest.repoFullName) {
+      throw new Error("Repository fullName must match pullRequest repoFullName.");
+    }
+    const transaction = await this.client.transaction("write");
+    try {
+      await executeUpsertRepository(transaction, input.repository);
+      await executeUpsertPullRequest(transaction, pullRequest);
+
+      for (const source of droppedSources) {
+        await this.deleteSourceInTransaction(transaction, source);
+      }
+
+      for (const prepared of preparedSources) {
+        await this.upsertSourceInTransaction(transaction, prepared.source);
+        await transaction.execute({
+          sql: `DELETE FROM pr_source_chunks
+            WHERE repo_full_name = ? AND pr_number = ? AND source_kind = ? AND source_id = ?`,
+          args: [
+            prepared.source.repoFullName,
+            prepared.source.prNumber,
+            prepared.source.sourceKind,
+            prepared.source.sourceId,
+          ],
+        });
+        await this.insertChunksInTransaction(transaction, prepared, embeddings);
+      }
+
+      await transaction.commit();
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
+  }
+
+  private async upsertSourceInTransaction(
+    transaction: Transaction,
+    source: PullRequestSourceDocument,
+  ): Promise<void> {
+    await transaction.execute({
+      sql: `INSERT INTO pr_sources (
+          repo_full_name, pr_number, source_kind, source_id, source_url, text, content_hash, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(repo_full_name, pr_number, source_kind, source_id) DO UPDATE SET
+          source_url = excluded.source_url,
+          text = excluded.text,
+          content_hash = excluded.content_hash,
+          updated_at = excluded.updated_at`,
+      args: [
+        source.repoFullName,
+        source.prNumber,
+        source.sourceKind,
+        source.sourceId,
+        source.sourceUrl ?? null,
+        source.text,
+        source.contentHash,
+        source.updatedAt ?? null,
+      ],
+    });
+  }
+
+  private async deleteSourceInTransaction(
+    transaction: Transaction,
+    source: PullRequestSourceIdentity,
+  ): Promise<void> {
+    await transaction.execute({
+      sql: `DELETE FROM pr_sources
+        WHERE repo_full_name = ? AND pr_number = ? AND source_kind = ? AND source_id = ?`,
+      args: [
+        source.repoFullName,
+        source.prNumber,
+        source.sourceKind,
+        source.sourceId,
+      ],
+    });
+  }
+
+  private async insertChunksInTransaction(
+    transaction: Transaction,
+    prepared: PreparedSource,
+    embeddings: EmbeddingProvider,
+  ): Promise<void> {
+    for (let index = 0; index < prepared.chunks.length; index += 1) {
+      await transaction.execute({
+        sql: `INSERT INTO pr_source_chunks (
+            id, repo_full_name, pr_number, source_kind, source_id, chunk_index,
+            text, content_hash, embedding_model, embedding
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, vector32(?))`,
+        args: [
+          chunkId(prepared.source, index, embeddings.model),
+          prepared.source.repoFullName,
+          prepared.source.prNumber,
+          prepared.source.sourceKind,
+          prepared.source.sourceId,
+          index,
+          prepared.chunks[index],
+          prepared.source.contentHash,
+          embeddings.model,
+          JSON.stringify(prepared.vectors[index]),
+        ],
+      });
+    }
+  }
+
+  private async markRepositoryIndexed(fullName: string): Promise<void> {
+    assertValidRepoFullName(fullName);
+    await this.client.execute({
+      sql: "UPDATE repositories SET indexed_at = ? WHERE full_name = ?",
+      args: [new Date().toISOString(), fullName],
+    });
+  }
 }
 
 export function chunkText(text: string, options: ChunkingOptions = {}): string[] {
@@ -608,6 +966,60 @@ export function chunkText(text: string, options: ChunkingOptions = {}): string[]
 
 function hashText(text: string): string {
   return createHash("sha256").update(text).digest("hex");
+}
+
+function sourceIdentity(source: PullRequestSourceDocument): PullRequestSourceIdentity {
+  return {
+    repoFullName: source.repoFullName,
+    prNumber: source.prNumber,
+    sourceKind: source.sourceKind,
+    sourceId: source.sourceId,
+  };
+}
+
+function selectedSourceDefinitions(
+  input: PullRequestCorpusInput,
+  sourceKinds: PullRequestSourceKind[] = DEFAULT_SOURCE_KINDS,
+): Array<PullRequestSourceDefinition & { text: string }> {
+  const selected = new Set(sourceKinds);
+  return PR_METADATA_SOURCE_DEFINITIONS
+    .filter((definition) => selected.has(definition.sourceKind))
+    .map((definition) => ({
+      ...definition,
+      text: input.pullRequest[definition.pullRequestField],
+    }));
+}
+
+function selectedSourceIdentities(
+  input: PullRequestCorpusInput,
+  sourceKinds: PullRequestSourceKind[] = DEFAULT_SOURCE_KINDS,
+): PullRequestSourceIdentity[] {
+  return selectedSourceDefinitions(input, sourceKinds).map((definition) => ({
+    repoFullName: input.pullRequest.repoFullName,
+    prNumber: input.pullRequest.number,
+    sourceKind: definition.sourceKind,
+    sourceId: definition.sourceId,
+  }));
+}
+
+function sourceIdentityKey(source: PullRequestSourceIdentity): string {
+  return `${source.repoFullName}\0${source.prNumber}\0${source.sourceKind}\0${source.sourceId}`;
+}
+
+function chunkId(
+  source: PullRequestSourceDocument,
+  chunkIndex: number,
+  embeddingModel: string,
+): string {
+  return [
+    source.repoFullName,
+    source.prNumber,
+    source.sourceKind,
+    source.sourceId,
+    source.contentHash,
+    embeddingModel,
+    chunkIndex,
+  ].join(":");
 }
 
 function assertPositiveInteger(value: number, label: string): void {
@@ -764,6 +1176,61 @@ function normalizeSearchQuery(query: SemanticSearchQuery): SemanticSearchQuery {
     repositories: boundedSearchRepositories(query.repositories),
     sourceKinds: boundedSearchSourceKinds(query.sourceKinds),
   };
+}
+
+function repositoryFromFullName(fullName: string): RepositoryRecord {
+  assertValidRepoFullName(fullName);
+  const separator = fullName.indexOf("/");
+  return {
+    provider: "github",
+    fullName,
+    owner: fullName.slice(0, separator),
+    name: fullName.slice(separator + 1),
+    isArchived: false,
+  };
+}
+
+function emptyIndexingResult(): IndexingResult {
+  return {
+    repositories: 0,
+    pullRequestsSeen: 0,
+    pullRequestsIndexed: 0,
+    sourcesIndexed: 0,
+    chunksIndexed: 0,
+    skippedUnchanged: 0,
+    failures: [],
+  };
+}
+
+function mergeIndexingResult(target: IndexingResult, source: IndexingResult): void {
+  target.repositories += source.repositories;
+  target.pullRequestsSeen += source.pullRequestsSeen;
+  target.pullRequestsIndexed += source.pullRequestsIndexed;
+  target.sourcesIndexed += source.sourcesIndexed;
+  target.chunksIndexed += source.chunksIndexed;
+  target.skippedUnchanged += source.skippedUnchanged;
+  target.failures.push(...source.failures);
+}
+
+function isPullRequestUpdatedSince(
+  pr: PullRequestRecord,
+  since: string | undefined,
+): boolean {
+  return since === undefined || Boolean(pr.updatedAt && pr.updatedAt >= since);
+}
+
+function assertVectorDimensions(vectors: number[][], dimensions: number): void {
+  for (const vector of vectors) {
+    if (vector.length !== dimensions) {
+      throw new Error(
+        `Embedding dimension mismatch: expected ${dimensions}, received ${vector.length}.`,
+      );
+    }
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function executeUpsertRepository(
