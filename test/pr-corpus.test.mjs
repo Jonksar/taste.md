@@ -673,3 +673,213 @@ test("indexRepository re-embeds unchanged content when embedding model changes",
   assert.equal(result.sourcesIndexed, 2);
   assert.equal(embedCalls > 0, true);
 });
+
+test("searchPullRequests returns scored matches with source metadata", async () => {
+  const retryPr = sampleInput();
+  const authPr = sampleInput({
+    pullRequest: {
+      repoFullName: "acme/widgets",
+      number: 43,
+      url: "https://github.com/acme/widgets/pull/43",
+      state: "open",
+      title: "Harden auth checks",
+      body: "Adds authorization checks to controller handlers.",
+    },
+  });
+  const { corpus } = await tempCorpusWithSource([retryPr, authPr]);
+
+  await corpus.indexRepository("acme/widgets");
+  const matches = await corpus.searchPullRequests({
+    query: "retry uploads",
+    limit: 2,
+  });
+
+  assert.equal(matches.length, 2);
+  assert.equal(matches[0].repoFullName, "acme/widgets");
+  assert.equal(matches[0].prNumber, 42);
+  assert.equal(matches[0].score >= matches[1].score, true);
+  assert.ok(["pr_title", "pr_body"].includes(matches[0].sourceKind));
+  assert.match(matches[0].sourceText, /Retry|retry|upload/);
+});
+
+test("searchPullRequests applies source filters before public limit", async () => {
+  const { corpus } = await tempCorpusWithSource([sampleInput()]);
+
+  await corpus.indexRepository("acme/widgets");
+  const matches = await corpus.searchPullRequests({
+    query: "Retry failed uploads",
+    sourceKinds: ["pr_body"],
+    limit: 1,
+  });
+
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].sourceKind, "pr_body");
+});
+
+test("searchPullRequests returns only filtered source text and PR metadata", async () => {
+  const secretInput = sampleInput({
+    pullRequest: {
+      ...sampleInput().pullRequest,
+      title: "secret-token title",
+      body: "contains secret-token",
+    },
+  });
+  const dir = await mkdtemp(join(tmpdir(), "taste-corpus-"));
+  const corpus = createPullRequestCorpus({
+    database: { url: `file:${join(dir, "corpus.db")}` },
+    embeddings: fakeEmbeddings(),
+    github: fakePullRequestSource([secretInput]),
+    privacy: localEmbeddingPrivacy({
+      sourceTextFilter(text) {
+        return text.replaceAll("secret-token", "[redacted]");
+      },
+    }),
+  });
+  await corpus.initialize();
+
+  await corpus.indexRepository("acme/widgets");
+  const matches = await corpus.searchPullRequests({
+    query: "redacted",
+    limit: 10,
+  });
+
+  assert.equal(JSON.stringify(matches).includes("secret-token"), false);
+  assert.equal(JSON.stringify(matches).includes("[redacted]"), true);
+});
+
+test("indexRepository removes previously indexed selected sources when the filter later drops them", async () => {
+  const secretInput = sampleInput({
+    pullRequest: {
+      ...sampleInput().pullRequest,
+      body: "contains stale-secret-token",
+    },
+  });
+  const dir = await mkdtemp(join(tmpdir(), "taste-corpus-"));
+  const database = { url: `file:${join(dir, "corpus.db")}` };
+  const first = createPullRequestCorpus({
+    database,
+    embeddings: fakeEmbeddings(),
+    github: fakePullRequestSource([secretInput]),
+    privacy: localEmbeddingPrivacy(),
+  });
+  await first.initialize();
+  await first.indexRepository("acme/widgets", { sourceKinds: ["pr_body"] });
+
+  const second = createPullRequestCorpus({
+    database,
+    embeddings: fakeEmbeddings(),
+    github: fakePullRequestSource([secretInput]),
+    privacy: localEmbeddingPrivacy({
+      sourceTextFilter(text, source) {
+        return source.sourceKind === "pr_body" ? undefined : text;
+      },
+    }),
+  });
+  await second.initialize();
+  await second.indexRepository("acme/widgets", { sourceKinds: ["pr_body"] });
+
+  const matches = await second.searchPullRequests({
+    query: "stale-secret-token",
+    sourceKinds: ["pr_body"],
+    limit: 10,
+  });
+  assert.deepEqual(matches, []);
+});
+
+test("searchPullRequests returns empty array for an empty corpus", async () => {
+  const corpus = await tempCorpus();
+
+  assert.deepEqual(await corpus.searchPullRequests({ query: "anything" }), []);
+});
+
+test("searchPullRequests rejects oversized and invalid query inputs before embedding", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "taste-corpus-"));
+  let embedQueryCalls = 0;
+  const corpus = createPullRequestCorpus({
+    database: { url: `file:${join(dir, "corpus.db")}` },
+    embeddings: {
+      ...fakeEmbeddings(),
+      async embedQuery(text) {
+        embedQueryCalls += 1;
+        return fakeVector(text, 3);
+      },
+    },
+    privacy: localEmbeddingPrivacy(),
+  });
+  await corpus.initialize();
+
+  await assert.rejects(
+    () => corpus.searchPullRequests({ query: "x".repeat(2001) }),
+    /search query must be 2000 characters or less/,
+  );
+  await assert.rejects(
+    () => corpus.searchPullRequests({
+      query: "x",
+      repositories: Array.from({ length: 51 }, (_, index) => `acme/repo-${index}`),
+    }),
+    /repositories filter must contain 50 repositories or fewer/,
+  );
+  await assert.rejects(
+    () => corpus.searchPullRequests({
+      query: "x",
+      sourceKinds: [
+        "pr_title",
+        "pr_body",
+        "issue_comment",
+        "review_comment",
+        "review_body",
+        "commit_message",
+        "changed_file",
+        "pr_title",
+      ],
+    }),
+    /sourceKinds filter must contain 7 source kinds or fewer/,
+  );
+  await assert.rejects(
+    () => corpus.searchPullRequests({
+      query: "x",
+      sourceKinds: ["not_a_source_kind"],
+    }),
+    /Invalid pull request source kind/,
+  );
+  assert.equal(embedQueryCalls, 0);
+});
+
+test("initialize fails when embedding dimensions change", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "taste-corpus-"));
+  const database = { url: `file:${join(dir, "corpus.db")}` };
+  const first = createPullRequestCorpus({
+    database,
+    embeddings: fakeEmbeddings(3),
+    privacy: localEmbeddingPrivacy(),
+  });
+  await first.initialize();
+
+  const second = createPullRequestCorpus({
+    database,
+    embeddings: fakeEmbeddings(4),
+    privacy: localEmbeddingPrivacy(),
+  });
+  await assert.rejects(
+    () => second.initialize(),
+    /Embedding dimensions mismatch/,
+  );
+});
+
+test("initialize allows same-dimension embedding model changes", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "taste-corpus-"));
+  const database = { url: `file:${join(dir, "corpus.db")}` };
+  const first = createPullRequestCorpus({
+    database,
+    embeddings: fakeEmbeddings(3, "fake-a"),
+    privacy: localEmbeddingPrivacy(),
+  });
+  await first.initialize();
+
+  const second = createPullRequestCorpus({
+    database,
+    embeddings: fakeEmbeddings(3, "fake-b"),
+    privacy: localEmbeddingPrivacy(),
+  });
+  await second.initialize();
+});

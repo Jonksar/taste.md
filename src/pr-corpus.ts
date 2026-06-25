@@ -572,10 +572,54 @@ class LibsqlPullRequestCorpus implements PullRequestCorpus {
     return combined;
   }
 
-  async searchPullRequests(
-    _query: SemanticSearchQuery,
-  ): Promise<SemanticPullRequestMatch[]> {
-    throw new Error("searchPullRequests is not implemented until Task 4.");
+  async searchPullRequests(query: SemanticSearchQuery): Promise<SemanticPullRequestMatch[]> {
+    const embeddings = this.requireEmbeddings("searchPullRequests");
+    const normalizedQuery = normalizeSearchQuery(query);
+    const limit = boundedLimit(normalizedQuery.limit, 10);
+
+    const vector = await embeddings.embedQuery(normalizedQuery.query);
+    if (vector.length !== embeddings.dimensions) {
+      throw new Error(
+        `Embedding dimension mismatch: expected ${embeddings.dimensions}, received ${vector.length}.`,
+      );
+    }
+
+    const filters = buildSearchFilters(normalizedQuery, embeddings.model);
+    const result = await this.client.execute({
+      sql: `SELECT
+          prs.repo_full_name,
+          prs.number,
+          prs.url,
+          prs.title,
+          chunks.source_kind,
+          chunks.text,
+          sources.source_url,
+          chunks.chunk_index,
+          vector_distance_cos(chunks.embedding, vector32(?)) AS distance
+        FROM pr_source_chunks chunks
+        JOIN pull_requests prs
+          ON prs.repo_full_name = chunks.repo_full_name
+          AND prs.number = chunks.pr_number
+        JOIN pr_sources sources
+          ON sources.repo_full_name = chunks.repo_full_name
+          AND sources.pr_number = chunks.pr_number
+          AND sources.source_kind = chunks.source_kind
+          AND sources.source_id = chunks.source_id
+        ${filters.where}
+        ORDER BY distance ASC
+        LIMIT ?`,
+      args: [
+        JSON.stringify(vector),
+        ...filters.args,
+        limit,
+      ],
+    });
+
+    return result.rows
+      .map((row) => searchMatchFromRow(row as Record<string, unknown>))
+      .filter((match) => (
+        normalizedQuery.minScore === undefined || match.score >= normalizedQuery.minScore
+      ));
   }
 
   private preparePullRequestSourceSet(
@@ -958,6 +1002,44 @@ class LibsqlPullRequestCorpus implements PullRequestCorpus {
       args: [new Date().toISOString(), fullName],
     });
   }
+}
+
+function buildSearchFilters(
+  query: SemanticSearchQuery,
+  embeddingModel: string,
+): { where: string; args: string[] } {
+  const clauses: string[] = ["chunks.embedding_model = ?"];
+  const args: string[] = [embeddingModel];
+
+  if (query.repositories?.length) {
+    clauses.push(`prs.repo_full_name IN (${query.repositories.map(() => "?").join(", ")})`);
+    args.push(...query.repositories);
+  }
+
+  if (query.sourceKinds?.length) {
+    clauses.push(`chunks.source_kind IN (${query.sourceKinds.map(() => "?").join(", ")})`);
+    args.push(...query.sourceKinds);
+  }
+
+  return {
+    where: `WHERE ${clauses.join(" AND ")}`,
+    args,
+  };
+}
+
+function searchMatchFromRow(row: Record<string, unknown>): SemanticPullRequestMatch {
+  const distance = Number(row.distance);
+  return {
+    score: 1 / (1 + distance),
+    repoFullName: String(row.repo_full_name),
+    prNumber: Number(row.number),
+    prUrl: String(row.url),
+    title: String(row.title),
+    sourceKind: String(row.source_kind) as PullRequestSourceKind,
+    sourceText: String(row.text),
+    sourceUrl: optionalString(row.source_url),
+    chunkIndex: Number(row.chunk_index),
+  };
 }
 
 export function chunkText(text: string, options: ChunkingOptions = {}): string[] {
