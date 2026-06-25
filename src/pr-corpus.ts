@@ -587,6 +587,7 @@ class LibsqlPullRequestCorpus implements PullRequestCorpus {
     dropped: PullRequestSourceIdentity[];
   } {
     const selected = new Set(sourceKinds ?? DEFAULT_SOURCE_KINDS);
+    const allMetadataIdentities = selectedSourceIdentities(input, ["pr_title", "pr_body"]);
     const selectedIdentities = new Map(
       selectedSourceIdentities(input, sourceKinds).map((source) => [
         sourceIdentityKey(source),
@@ -595,7 +596,13 @@ class LibsqlPullRequestCorpus implements PullRequestCorpus {
     );
     const filteredTextByField = new Map<PullRequestMetadataField, string>();
     const sources: PullRequestSourceDocument[] = [];
-    const dropped: PullRequestSourceIdentity[] = [];
+    const dropped = new Map<string, PullRequestSourceIdentity>();
+
+    for (const identity of allMetadataIdentities) {
+      if (!selected.has(identity.sourceKind)) {
+        dropped.set(sourceIdentityKey(identity), identity);
+      }
+    }
 
     for (const rawSource of createPullRequestSources(input, ["pr_title", "pr_body"])) {
       const filtered = this.filterSourceText(rawSource);
@@ -610,11 +617,13 @@ class LibsqlPullRequestCorpus implements PullRequestCorpus {
       if (filtered) {
         sources.push(filtered);
       } else {
-        dropped.push(sourceIdentity(rawSource));
+        dropped.set(sourceIdentityKey(rawSource), sourceIdentity(rawSource));
       }
     }
 
-    dropped.push(...selectedIdentities.values());
+    for (const identity of selectedIdentities.values()) {
+      dropped.set(sourceIdentityKey(identity), identity);
+    }
     return {
       pullRequest: {
         ...input.pullRequest,
@@ -622,7 +631,7 @@ class LibsqlPullRequestCorpus implements PullRequestCorpus {
         body: filteredTextByField.get("body") ?? "",
       },
       sources,
-      dropped,
+      dropped: [...dropped.values()],
     };
   }
 

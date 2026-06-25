@@ -313,18 +313,19 @@ function fakePullRequestSource(inputs) {
 
 async function tempCorpusWithSource(inputs, dimensions = 3) {
   const dir = await mkdtemp(join(tmpdir(), "taste-corpus-"));
+  const database = { url: `file:${join(dir, "corpus.db")}` };
   const corpus = createPullRequestCorpus({
-    database: { url: `file:${join(dir, "corpus.db")}` },
+    database,
     embeddings: fakeEmbeddings(dimensions),
     github: fakePullRequestSource(inputs),
     privacy: localEmbeddingPrivacy(),
   });
   await corpus.initialize();
-  return corpus;
+  return { corpus, database };
 }
 
 test("indexRepository stores PR metadata and indexes title and body sources", async () => {
-  const corpus = await tempCorpusWithSource([sampleInput()]);
+  const { corpus } = await tempCorpusWithSource([sampleInput()]);
 
   const result = await corpus.indexRepository("acme/widgets");
 
@@ -337,7 +338,7 @@ test("indexRepository stores PR metadata and indexes title and body sources", as
 });
 
 test("indexRepository upserts an empty repository before paging", async () => {
-  const corpus = await tempCorpusWithSource([]);
+  const { corpus } = await tempCorpusWithSource([]);
 
   const result = await corpus.indexRepository("acme/empty");
   const repository = await corpus.getRepository("acme/empty");
@@ -351,7 +352,7 @@ test("indexRepository upserts an empty repository before paging", async () => {
 });
 
 test("indexRepository skips unchanged sources on repeated runs", async () => {
-  const corpus = await tempCorpusWithSource([sampleInput()]);
+  const { corpus } = await tempCorpusWithSource([sampleInput()]);
 
   await corpus.indexRepository("acme/widgets");
   const second = await corpus.indexRepository("acme/widgets");
@@ -362,13 +363,32 @@ test("indexRepository skips unchanged sources on repeated runs", async () => {
 });
 
 test("indexRepository filters source kinds", async () => {
-  const corpus = await tempCorpusWithSource([sampleInput()]);
+  const { corpus, database } = await tempCorpusWithSource([sampleInput()]);
 
+  await corpus.indexRepository("acme/widgets");
   const result = await corpus.indexRepository("acme/widgets", {
     sourceKinds: ["pr_body"],
   });
+  const client = createClient(database);
+  const remainingSources = await client.execute(
+    "SELECT source_kind FROM pr_sources WHERE repo_full_name = ? AND pr_number = ? ORDER BY source_kind",
+    ["acme/widgets", 42],
+  );
+  const remainingChunks = await client.execute(
+    "SELECT source_kind FROM pr_source_chunks WHERE repo_full_name = ? AND pr_number = ? ORDER BY source_kind, chunk_index",
+    ["acme/widgets", 42],
+  );
 
-  assert.equal(result.sourcesIndexed, 1);
+  assert.equal(result.sourcesIndexed, 0);
+  assert.equal(result.skippedUnchanged, 1);
+  assert.deepEqual(
+    remainingSources.rows.map((row) => row.source_kind),
+    ["pr_body"],
+  );
+  assert.deepEqual(
+    remainingChunks.rows.map((row) => row.source_kind),
+    ["pr_body"],
+  );
 });
 
 test("indexRepository enforces maxPullRequests even when the source yields more", async () => {
@@ -384,7 +404,7 @@ test("indexRepository enforces maxPullRequests even when the source yields more"
       },
     });
   });
-  const corpus = await tempCorpusWithSource(inputs);
+  const { corpus } = await tempCorpusWithSource(inputs);
 
   const result = await corpus.indexRepository("acme/widgets", { maxPullRequests: 2 });
 
@@ -413,7 +433,7 @@ test("indexRepository with since skips older normalized pull requests", async ()
       updatedAt: "2026-02-01T00:00:00.000Z",
     },
   });
-  const corpus = await tempCorpusWithSource([oldPr, newPr]);
+  const { corpus } = await tempCorpusWithSource([oldPr, newPr]);
 
   const result = await corpus.indexRepository("acme/widgets", {
     since: "2026-01-15T00:00:00.000Z",
