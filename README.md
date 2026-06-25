@@ -171,5 +171,5 @@ npm run build
 npm test
 ```
 
-This repository has no runtime dependencies. It uses TypeScript for source and
-Node's built-in test runner for tests.
+This repository uses TypeScript for source, `@libsql/client` for the pull
+request corpus storage backend, and Node's built-in test runner for tests.
