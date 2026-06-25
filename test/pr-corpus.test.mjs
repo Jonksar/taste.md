@@ -35,6 +35,20 @@ function sampleInput(overrides = {}) {
   };
 }
 
+function sampleChangedFileSource(overrides = {}) {
+  return {
+    repoFullName: "acme/widgets",
+    prNumber: 42,
+    sourceKind: "changed_file",
+    sourceId: "src/retry.ts",
+    sourceUrl: "https://github.com/acme/widgets/pull/42/files#diff-retry",
+    text: "export function retryUpload() { return 'retry uploads'; }",
+    contentHash: "stale-hash",
+    updatedAt: "2026-01-02T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 function fakeEmbeddings(dimensions = 3, model = `fake-${dimensions}`) {
   return {
     model,
@@ -91,6 +105,19 @@ test("createPullRequestSources respects sourceKind filters", () => {
 
   assert.equal(sources.length, 1);
   assert.equal(sources[0].sourceKind, "pr_body");
+});
+
+test("createPullRequestSources includes supplied source documents for requested source kinds", () => {
+  const sources = createPullRequestSources(sampleInput({
+    sources: [sampleChangedFileSource()],
+  }), ["changed_file"]);
+
+  assert.equal(sources.length, 1);
+  assert.equal(sources[0].sourceKind, "changed_file");
+  assert.equal(sources[0].sourceId, "src/retry.ts");
+  assert.equal(sources[0].text, "export function retryUpload() { return 'retry uploads'; }");
+  assert.match(sources[0].contentHash, /^[a-f0-9]{64}$/);
+  assert.notEqual(sources[0].contentHash, "stale-hash");
 });
 
 test("createPullRequestSources drops empty text sources", () => {
@@ -389,6 +416,47 @@ test("indexRepository filters source kinds", async () => {
     remainingChunks.rows.map((row) => row.source_kind),
     ["pr_body"],
   );
+});
+
+test("indexRepository stores and searches supplied source documents when requested", async () => {
+  const input = sampleInput({
+    sources: [
+      sampleChangedFileSource({
+        text: "export function retryUpload() { return 'retry uploads semantic corpus'; }",
+      }),
+    ],
+  });
+  const { corpus, database } = await tempCorpusWithSource([input]);
+
+  const result = await corpus.indexRepository("acme/widgets", {
+    sourceKinds: ["changed_file"],
+  });
+  const client = createClient(database);
+  const storedSources = await client.execute(
+    `SELECT source_kind, source_id, text, content_hash
+      FROM pr_sources
+      WHERE repo_full_name = ? AND pr_number = ?
+      ORDER BY source_kind, source_id`,
+    ["acme/widgets", 42],
+  );
+  const matches = await corpus.searchPullRequests({
+    query: "semantic corpus retry uploads",
+    sourceKinds: ["changed_file"],
+    limit: 5,
+  });
+
+  assert.equal(result.pullRequestsSeen, 1);
+  assert.equal(result.pullRequestsIndexed, 1);
+  assert.equal(result.sourcesIndexed, 1);
+  assert.deepEqual(
+    storedSources.rows.map((row) => row.source_kind),
+    ["changed_file"],
+  );
+  assert.equal(storedSources.rows[0].source_id, "src/retry.ts");
+  assert.match(String(storedSources.rows[0].content_hash), /^[a-f0-9]{64}$/);
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].sourceKind, "changed_file");
+  assert.equal(matches[0].sourceText.includes("semantic corpus"), true);
 });
 
 test("indexRepository does not recount absent narrowed sources on repeated runs", async () => {
@@ -843,6 +911,89 @@ test("searchPullRequests rejects oversized and invalid query inputs before embed
     /Invalid pull request source kind/,
   );
   assert.equal(embedQueryCalls, 0);
+});
+
+test("indexRepository rejects invalid sourceKinds before touching existing rows", async () => {
+  let githubCalls = 0;
+  const dir = await mkdtemp(join(tmpdir(), "taste-corpus-"));
+  const database = { url: `file:${join(dir, "corpus.db")}` };
+  const corpus = createPullRequestCorpus({
+    database,
+    embeddings: fakeEmbeddings(),
+    github: {
+      async *listPullRequests() {
+        githubCalls += 1;
+        yield sampleInput();
+      },
+    },
+    privacy: localEmbeddingPrivacy(),
+  });
+  await corpus.initialize();
+  await corpus.indexRepository("acme/widgets");
+
+  await assert.rejects(
+    () => corpus.indexRepository("acme/widgets", {
+      sourceKinds: ["pr_bdy"],
+    }),
+    /Invalid pull request source kind: pr_bdy/,
+  );
+
+  const client = createClient(database);
+  const remainingSources = await client.execute(
+    "SELECT source_kind FROM pr_sources WHERE repo_full_name = ? AND pr_number = ? ORDER BY source_kind",
+    ["acme/widgets", 42],
+  );
+  assert.equal(githubCalls, 1);
+  assert.deepEqual(
+    remainingSources.rows.map((row) => row.source_kind),
+    ["pr_body", "pr_title"],
+  );
+});
+
+test("indexRepository rejects oversized sourceKinds before touching existing rows", async () => {
+  let githubCalls = 0;
+  const dir = await mkdtemp(join(tmpdir(), "taste-corpus-"));
+  const database = { url: `file:${join(dir, "corpus.db")}` };
+  const corpus = createPullRequestCorpus({
+    database,
+    embeddings: fakeEmbeddings(),
+    github: {
+      async *listPullRequests() {
+        githubCalls += 1;
+        yield sampleInput();
+      },
+    },
+    privacy: localEmbeddingPrivacy(),
+  });
+  await corpus.initialize();
+  await corpus.indexRepository("acme/widgets");
+
+  await assert.rejects(
+    () => corpus.indexRepository("acme/widgets", {
+      sourceKinds: [
+        "pr_title",
+        "pr_body",
+        "issue_comment",
+        "review_comment",
+        "review_body",
+        "commit_message",
+        "changed_file",
+        "pr_title",
+      ],
+    }),
+    /sourceKinds filter must contain 7 source kinds or fewer/,
+  );
+
+  const client = createClient(database);
+  const remainingSources = await client.execute(
+    "SELECT source_kind FROM pr_sources WHERE repo_full_name = ? AND pr_number = ? ORDER BY source_kind",
+    ["acme/widgets", 42],
+  );
+  assert.equal(githubCalls, 1);
+  assert.deepEqual(
+    remainingSources.rows.map((row) => row.source_kind),
+    ["pr_body", "pr_title"],
+  );
 });
 
 test("initialize fails when embedding dimensions change", async () => {

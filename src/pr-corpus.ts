@@ -263,6 +263,14 @@ export function createPullRequestSources(
     });
   }
 
+  for (const source of input.sources) {
+    if (!selected.has(source.sourceKind)) continue;
+
+    const normalized = normalizeProvidedSource(source);
+    if (!normalized) continue;
+    sources.push(normalized);
+  }
+
   return sources;
 }
 
@@ -447,6 +455,7 @@ class LibsqlPullRequestCorpus implements PullRequestCorpus {
       throw new Error("indexRepository requires a GitHubPullRequestSource.");
     }
     const embeddings = this.requireEmbeddings("indexRepository");
+    const sourceKinds = normalizeIndexSourceKinds(options.sourceKinds);
 
     const result = emptyIndexingResult();
     try {
@@ -481,7 +490,7 @@ class LibsqlPullRequestCorpus implements PullRequestCorpus {
         try {
           const prepared = await this.prepareChangedSources(
             input,
-            options.sourceKinds,
+            sourceKinds,
             embeddings,
           );
           filteredPullRequest = prepared.pullRequest;
@@ -564,9 +573,10 @@ class LibsqlPullRequestCorpus implements PullRequestCorpus {
   async indexRepositories(options: IndexRepositoriesOptions): Promise<IndexingResult> {
     const combined = emptyIndexingResult();
     const { repositories, ...indexOptions } = options;
+    const sourceKinds = normalizeIndexSourceKinds(indexOptions.sourceKinds);
     for (const repo of repositories) {
       assertValidRepoFullName(repo);
-      const result = await this.indexRepository(repo, indexOptions);
+      const result = await this.indexRepository(repo, { ...indexOptions, sourceKinds });
       mergeIndexingResult(combined, result);
     }
     return combined;
@@ -631,7 +641,7 @@ class LibsqlPullRequestCorpus implements PullRequestCorpus {
     dropped: PullRequestSourceIdentity[];
   } {
     const selected = new Set(sourceKinds ?? DEFAULT_SOURCE_KINDS);
-    const allMetadataIdentities = selectedSourceIdentities(input, ["pr_title", "pr_body"]);
+    const allSourceIdentities = collectSourceIdentities(input);
     const selectedIdentities = new Map(
       selectedSourceIdentities(input, sourceKinds).map((source) => [
         sourceIdentityKey(source),
@@ -642,7 +652,7 @@ class LibsqlPullRequestCorpus implements PullRequestCorpus {
     const sources: PullRequestSourceDocument[] = [];
     const dropped = new Map<string, PullRequestSourceIdentity>();
 
-    for (const identity of allMetadataIdentities) {
+    for (const identity of allSourceIdentities) {
       if (!selected.has(identity.sourceKind)) {
         dropped.set(sourceIdentityKey(identity), identity);
       }
@@ -658,6 +668,26 @@ class LibsqlPullRequestCorpus implements PullRequestCorpus {
       if (!selected.has(rawSource.sourceKind)) continue;
 
       selectedIdentities.delete(sourceIdentityKey(rawSource));
+      if (filtered) {
+        sources.push(filtered);
+      } else {
+        dropped.set(sourceIdentityKey(rawSource), sourceIdentity(rawSource));
+      }
+    }
+
+    for (const rawSource of createPullRequestSources(
+      input,
+      input.sources.map((source) => source.sourceKind),
+    )) {
+      if (PR_METADATA_FIELD_BY_KIND.has(
+        rawSource.sourceKind as Extract<PullRequestSourceKind, "pr_title" | "pr_body">,
+      )) {
+        continue;
+      }
+      if (!selected.has(rawSource.sourceKind)) continue;
+
+      selectedIdentities.delete(sourceIdentityKey(rawSource));
+      const filtered = this.filterSourceText(rawSource);
       if (filtered) {
         sources.push(filtered);
       } else {
@@ -1113,12 +1143,27 @@ function selectedSourceIdentities(
   input: PullRequestCorpusInput,
   sourceKinds: PullRequestSourceKind[] = DEFAULT_SOURCE_KINDS,
 ): PullRequestSourceIdentity[] {
-  return selectedSourceDefinitions(input, sourceKinds).map((definition) => ({
+  const identities: PullRequestSourceIdentity[] = selectedSourceDefinitions(input, sourceKinds).map((definition) => ({
     repoFullName: input.pullRequest.repoFullName,
     prNumber: input.pullRequest.number,
     sourceKind: definition.sourceKind,
     sourceId: definition.sourceId,
   }));
+  const selected = new Set(sourceKinds);
+
+  for (const source of input.sources) {
+    if (!selected.has(source.sourceKind)) continue;
+    identities.push(sourceIdentity(source));
+  }
+
+  return identities;
+}
+
+function collectSourceIdentities(input: PullRequestCorpusInput): PullRequestSourceIdentity[] {
+  return [
+    ...selectedSourceIdentities(input, ["pr_title", "pr_body"]),
+    ...input.sources.map((source) => sourceIdentity(source)),
+  ];
 }
 
 function sourceIdentityKey(source: PullRequestSourceIdentity): string {
@@ -1280,6 +1325,12 @@ function boundedSearchSourceKinds(
   return sourceKinds;
 }
 
+function normalizeIndexSourceKinds(
+  sourceKinds: PullRequestSourceKind[] | undefined,
+): PullRequestSourceKind[] | undefined {
+  return boundedSearchSourceKinds(sourceKinds);
+}
+
 export function assertValidPullRequestSourceKind(
   sourceKind: string,
 ): asserts sourceKind is PullRequestSourceKind {
@@ -1350,6 +1401,21 @@ function assertVectorDimensions(vectors: number[][], dimensions: number): void {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function normalizeProvidedSource(
+  source: PullRequestSourceDocument,
+): PullRequestSourceDocument | undefined {
+  assertValidPullRequestSourceKind(source.sourceKind);
+  const text = source.text.trim();
+  if (!text) {
+    return undefined;
+  }
+  return {
+    ...source,
+    text,
+    contentHash: hashText(text),
+  };
 }
 
 async function executeUpsertRepository(
