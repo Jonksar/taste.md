@@ -25,3 +25,12 @@ declare module "node:process" {
   export const stdout: { write(message: string): boolean };
   export function exit(code?: number): never;
 }
+
+declare module "node:crypto" {
+  export interface Hash {
+    update(data: string): Hash;
+    digest(encoding: "hex"): string;
+  }
+
+  export function createHash(algorithm: string): Hash;
+}

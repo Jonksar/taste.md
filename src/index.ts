@@ -11,5 +11,20 @@ export { fetchPullRequestEvidence } from "./github.js";
 export type { FetchPullRequestParams } from "./github.js";
 export { discoverGuidelineCandidates, discoverRepositoryCandidates } from "./guidelines.js";
 export type { DiscoverGuidelineOptions, DiscoverRepositoryOptions } from "./guidelines.js";
+export {
+  PULL_REQUEST_SOURCE_KINDS,
+  chunkText,
+  createPullRequestSources,
+} from "./pr-corpus.js";
+export type {
+  ChunkingOptions,
+  EmbeddingProvider,
+  PullRequestCorpusInput,
+  PullRequestRecord,
+  PullRequestSourceDocument,
+  PullRequestSourceKind,
+  RepositoryRecord,
+  SemanticPullRequestMatch,
+} from "./pr-corpus.js";
 export { renderTasteLogMarkdown, renderTasteMarkdown } from "./markdown.js";
 export type { RenderOptions } from "./markdown.js";
