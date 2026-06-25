@@ -242,6 +242,7 @@ export function createPullRequestSources(
   input: PullRequestCorpusInput,
   sourceKinds: PullRequestSourceKind[] = DEFAULT_SOURCE_KINDS,
 ): PullRequestSourceDocument[] {
+  assertProvidedSourceIdentity(input);
   const selected = new Set(sourceKinds);
   const sources: PullRequestSourceDocument[] = [];
 
@@ -396,6 +397,7 @@ class LibsqlPullRequestCorpus implements PullRequestCorpus {
     if (input.repository.fullName !== input.pullRequest.repoFullName) {
       throw new Error("Repository fullName must match pullRequest repoFullName.");
     }
+    assertProvidedSourceIdentity(input);
     await this.upsertRepository(input.repository);
     const { pullRequest: pr } = this.preparePullRequestSourceSet(input, ["pr_title", "pr_body"]);
     await executeUpsertPullRequest(this.client, pr);
@@ -1401,6 +1403,19 @@ function assertVectorDimensions(vectors: number[][], dimensions: number): void {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function assertProvidedSourceIdentity(input: PullRequestCorpusInput): void {
+  for (const source of input.sources) {
+    if (
+      source.repoFullName !== input.pullRequest.repoFullName
+      || source.prNumber !== input.pullRequest.number
+    ) {
+      throw new Error(
+        "Supplied source document repoFullName and prNumber must match pullRequest identity.",
+      );
+    }
+  }
 }
 
 function normalizeProvidedSource(

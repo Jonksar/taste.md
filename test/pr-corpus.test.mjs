@@ -459,6 +459,57 @@ test("indexRepository stores and searches supplied source documents when request
   assert.equal(matches[0].sourceText.includes("semantic corpus"), true);
 });
 
+test("indexRepository rejects supplied source documents that target another PR identity before writing them", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "taste-corpus-"));
+  const database = { url: `file:${join(dir, "corpus.db")}` };
+  const corpus = createPullRequestCorpus({
+    database,
+    embeddings: fakeEmbeddings(),
+    github: fakePullRequestSource([
+      sampleInput({
+        sources: [
+          sampleChangedFileSource({
+            repoFullName: "evil/widgets",
+          }),
+        ],
+      }),
+    ]),
+    privacy: localEmbeddingPrivacy(),
+  });
+  await corpus.initialize();
+  await corpus.upsertPullRequest(sampleInput({
+    repository: {
+      provider: "github",
+      fullName: "evil/widgets",
+      owner: "evil",
+      name: "widgets",
+    },
+    pullRequest: {
+      ...sampleInput().pullRequest,
+      repoFullName: "evil/widgets",
+      url: "https://github.com/evil/widgets/pull/42",
+    },
+  }));
+
+  const result = await corpus.indexRepository("acme/widgets", {
+    sourceKinds: ["changed_file"],
+  });
+  const client = createClient(database);
+  const foreignSources = await client.execute(
+    "SELECT source_kind, source_id FROM pr_sources WHERE repo_full_name = ? AND pr_number = ?",
+    ["evil/widgets", 42],
+  );
+
+  assert.equal(result.pullRequestsSeen, 1);
+  assert.equal(result.pullRequestsIndexed, 0);
+  assert.equal(result.sourcesIndexed, 0);
+  assert.equal(result.failures.length, 1);
+  assert.equal(result.failures[0].stage, "database");
+  assert.match(result.failures[0].message, /must match pullRequest/i);
+  assert.equal(await corpus.getPullRequest("acme/widgets", 42), undefined);
+  assert.deepEqual(foreignSources.rows, []);
+});
+
 test("indexRepository does not recount absent narrowed sources on repeated runs", async () => {
   const { corpus } = await tempCorpusWithSource([sampleInput()]);
 
