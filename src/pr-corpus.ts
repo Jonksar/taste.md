@@ -874,36 +874,66 @@ class LibsqlPullRequestCorpus implements PullRequestCorpus {
       pullRequest: filtered.pullRequest,
       unchanged,
       changed,
-      dropped: await this.selectExistingStoredSources(filtered.dropped),
+      dropped: await this.selectDroppedStoredSources(
+        input,
+        sourceKinds,
+        filtered.dropped,
+      ),
     };
   }
 
-  private async selectExistingStoredSources(
-    sources: PullRequestSourceIdentity[],
+  private async selectDroppedStoredSources(
+    input: PullRequestCorpusInput,
+    sourceKinds: PullRequestSourceKind[] | undefined,
+    droppedSources: PullRequestSourceIdentity[],
   ): Promise<PullRequestSourceIdentity[]> {
-    const existing: PullRequestSourceIdentity[] = [];
+    const persisted = await this.selectStoredSourcesForPullRequest(
+      input.pullRequest.repoFullName,
+      input.pullRequest.number,
+    );
+    const persistedKeys = new Set(
+      persisted.map((source) => sourceIdentityKey(source)),
+    );
+    const selectedKinds = new Set(sourceKinds ?? DEFAULT_SOURCE_KINDS);
+    const selectedKeys = new Set(
+      selectedSourceIdentities(input, sourceKinds).map((source) => sourceIdentityKey(source)),
+    );
+    const dropped = new Map<string, PullRequestSourceIdentity>();
 
-    for (const source of sources) {
-      const result = await this.client.execute({
-        sql: `SELECT 1
-          FROM pr_sources
-          WHERE repo_full_name = ?
-            AND pr_number = ?
-            AND source_kind = ?
-            AND source_id = ?`,
-        args: [
-          source.repoFullName,
-          source.prNumber,
-          source.sourceKind,
-          source.sourceId,
-        ],
-      });
-      if (result.rows.length > 0) {
-        existing.push(source);
+    for (const source of persisted) {
+      const key = sourceIdentityKey(source);
+      if (!selectedKinds.has(source.sourceKind) || !selectedKeys.has(key)) {
+        dropped.set(key, source);
       }
     }
 
-    return existing;
+    for (const source of droppedSources) {
+      const key = sourceIdentityKey(source);
+      if (persistedKeys.has(key)) {
+        dropped.set(key, source);
+      }
+    }
+
+    return [...dropped.values()];
+  }
+
+  private async selectStoredSourcesForPullRequest(
+    repoFullName: string,
+    prNumber: number,
+  ): Promise<PullRequestSourceIdentity[]> {
+    const result = await this.client.execute({
+      sql: `SELECT source_kind, source_id
+        FROM pr_sources
+        WHERE repo_full_name = ?
+          AND pr_number = ?`,
+      args: [repoFullName, prNumber],
+    });
+    return result.rows.map((row) => ({
+      repoFullName,
+      prNumber,
+      sourceKind: row.source_kind as PullRequestSourceKind,
+      sourceId: String(row.source_id),
+    }));
   }
 
   private async embedSources(

@@ -459,6 +459,68 @@ test("indexRepository stores and searches supplied source documents when request
   assert.equal(matches[0].sourceText.includes("semantic corpus"), true);
 });
 
+test("indexRepository removes stale omitted supplied sources for selected source kinds", async () => {
+  let currentInputs = [sampleInput({
+    sources: [
+      sampleChangedFileSource({
+        text: "export function retryUpload() { return 'stale omitted semantic corpus'; }",
+      }),
+    ],
+  })];
+  const dir = await mkdtemp(join(tmpdir(), "taste-corpus-"));
+  const database = { url: `file:${join(dir, "corpus.db")}` };
+  const corpus = createPullRequestCorpus({
+    database,
+    embeddings: fakeEmbeddings(),
+    github: {
+      async *listPullRequests(repoFullName) {
+        for (const input of currentInputs) {
+          if (input.repository.fullName === repoFullName) yield input;
+        }
+      },
+    },
+    privacy: localEmbeddingPrivacy(),
+  });
+  await corpus.initialize();
+
+  await corpus.indexRepository("acme/widgets", {
+    sourceKinds: ["changed_file"],
+  });
+
+  currentInputs = [sampleInput({
+    sources: [],
+  })];
+  const result = await corpus.indexRepository("acme/widgets", {
+    sourceKinds: ["changed_file"],
+  });
+  const client = createClient(database);
+  const storedSources = await client.execute(
+    `SELECT source_kind, source_id
+      FROM pr_sources
+      WHERE repo_full_name = ? AND pr_number = ?`,
+    ["acme/widgets", 42],
+  );
+  const storedChunks = await client.execute(
+    `SELECT source_kind, source_id
+      FROM pr_source_chunks
+      WHERE repo_full_name = ? AND pr_number = ?`,
+    ["acme/widgets", 42],
+  );
+  const matches = await corpus.searchPullRequests({
+    query: "stale omitted semantic corpus",
+    sourceKinds: ["changed_file"],
+    limit: 5,
+  });
+
+  assert.equal(result.pullRequestsSeen, 1);
+  assert.equal(result.pullRequestsIndexed, 1);
+  assert.equal(result.sourcesIndexed, 0);
+  assert.equal(result.skippedUnchanged, 0);
+  assert.deepEqual(storedSources.rows, []);
+  assert.deepEqual(storedChunks.rows, []);
+  assert.deepEqual(matches, []);
+});
+
 test("indexRepository rejects supplied source documents that target another PR identity before writing them", async () => {
   const dir = await mkdtemp(join(tmpdir(), "taste-corpus-"));
   const database = { url: `file:${join(dir, "corpus.db")}` };
