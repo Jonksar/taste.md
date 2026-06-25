@@ -165,6 +165,57 @@ test("repository CRUD stores, lists, reads, and deletes repositories", async () 
   assert.equal(await corpus.getRepository("acme/widgets"), undefined);
 });
 
+test("upsertRepository preserves existing optional metadata when omitted", async () => {
+  const corpus = await tempCorpus();
+
+  await corpus.upsertRepository({
+    provider: "github",
+    fullName: "acme/widgets",
+    owner: "acme",
+    name: "widgets",
+    defaultBranch: "main",
+    isArchived: true,
+    indexedAt: "2026-01-04T00:00:00.000Z",
+  });
+
+  await corpus.upsertRepository({
+    provider: "github",
+    fullName: "acme/widgets",
+    owner: "acme",
+    name: "widgets",
+  });
+
+  assert.deepEqual(await corpus.getRepository("acme/widgets"), {
+    provider: "github",
+    fullName: "acme/widgets",
+    owner: "acme",
+    name: "widgets",
+    defaultBranch: "main",
+    isArchived: true,
+    indexedAt: "2026-01-04T00:00:00.000Z",
+  });
+
+  await corpus.upsertRepository({
+    provider: "github",
+    fullName: "acme/widgets",
+    owner: "acme",
+    name: "widgets",
+    defaultBranch: "trunk",
+    isArchived: false,
+    indexedAt: "2026-01-05T00:00:00.000Z",
+  });
+
+  assert.deepEqual(await corpus.getRepository("acme/widgets"), {
+    provider: "github",
+    fullName: "acme/widgets",
+    owner: "acme",
+    name: "widgets",
+    defaultBranch: "trunk",
+    isArchived: false,
+    indexedAt: "2026-01-05T00:00:00.000Z",
+  });
+});
+
 test("pull request CRUD stores, lists, reads, and deletes pull requests", async () => {
   const corpus = await tempCorpus();
   const input = sampleInput();

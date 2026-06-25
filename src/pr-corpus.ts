@@ -1399,7 +1399,6 @@ function repositoryFromFullName(fullName: string): RepositoryRecord {
     fullName,
     owner: fullName.slice(0, separator),
     name: fullName.slice(separator + 1),
-    isArchived: false,
   };
 }
 
@@ -1503,9 +1502,9 @@ async function executeUpsertRepository(
         provider = excluded.provider,
         owner = excluded.owner,
         name = excluded.name,
-        default_branch = excluded.default_branch,
-        is_archived = excluded.is_archived,
-        indexed_at = excluded.indexed_at`,
+        default_branch = COALESCE(?, repositories.default_branch),
+        is_archived = COALESCE(?, repositories.is_archived),
+        indexed_at = COALESCE(?, repositories.indexed_at)`,
     args: [
       repo.fullName,
       repo.provider,
@@ -1513,6 +1512,9 @@ async function executeUpsertRepository(
       repo.name,
       repo.defaultBranch ?? null,
       repo.isArchived ? 1 : 0,
+      repo.indexedAt ?? null,
+      repo.defaultBranch ?? null,
+      repo.isArchived === undefined ? null : repo.isArchived ? 1 : 0,
       repo.indexedAt ?? null,
     ],
   });
