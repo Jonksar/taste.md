@@ -7,6 +7,8 @@ export type {
   TasteCandidate,
   TasteEvidenceItem,
 } from "./evidence.js";
+export { createGhCliPullRequestSource } from "./gh-cli.js";
+export type { GhCliPullRequestSourceOptions, GhRunner } from "./gh-cli.js";
 export { fetchPullRequestEvidence } from "./github.js";
 export type { FetchPullRequestParams } from "./github.js";
 export { discoverGuidelineCandidates, discoverRepositoryCandidates } from "./guidelines.js";

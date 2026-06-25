@@ -35,3 +35,16 @@ declare module "node:crypto" {
 
   export function createHash(algorithm: string): Hash;
 }
+
+declare module "node:child_process" {
+  export interface ExecFileOptions {
+    maxBuffer?: number;
+  }
+
+  export function execFile(
+    file: string,
+    args: readonly string[],
+    options: ExecFileOptions,
+    callback: (error: Error | null, stdout: string, stderr: string) => void,
+  ): void;
+}
