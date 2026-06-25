@@ -24,6 +24,7 @@ declare module "node:process" {
   export const stderr: { write(message: string): boolean };
   export const stdout: { write(message: string): boolean };
   export function exit(code?: number): never;
+  export function emitWarning(warning: string): void;
 }
 
 declare module "node:crypto" {

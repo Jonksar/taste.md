@@ -14,17 +14,31 @@ export type { DiscoverGuidelineOptions, DiscoverRepositoryOptions } from "./guid
 export {
   PULL_REQUEST_SOURCE_KINDS,
   chunkText,
+  createPullRequestCorpus,
   createPullRequestSources,
 } from "./pr-corpus.js";
 export type {
   ChunkingOptions,
+  CorpusPrivacyOptions,
+  CreatePullRequestCorpusOptions,
   EmbeddingProvider,
+  GitHubPullRequestListOptions,
+  GitHubPullRequestSource,
+  IndexingFailure,
+  IndexingResult,
+  IndexRepositoriesOptions,
+  IndexRepositoryOptions,
+  PullRequestCorpus,
   PullRequestCorpusInput,
+  PullRequestListOptions,
   PullRequestRecord,
   PullRequestSourceDocument,
   PullRequestSourceKind,
   RepositoryRecord,
   SemanticPullRequestMatch,
+  SemanticSearchQuery,
+  SourceTextFilter,
+  TursoDatabaseOptions,
 } from "./pr-corpus.js";
 export { renderTasteLogMarkdown, renderTasteMarkdown } from "./markdown.js";
 export type { RenderOptions } from "./markdown.js";
