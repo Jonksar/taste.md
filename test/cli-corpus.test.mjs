@@ -35,6 +35,59 @@ test("corpus prs requires a repository", async () => {
   );
 });
 
+test("corpus commands reject unexpected extra positionals", async () => {
+  await assert.rejects(
+    () => execFileAsync(process.execPath, [
+      cliPath.pathname,
+      "corpus",
+      "init",
+      "typo",
+      "--db",
+      "file:test.db",
+    ]),
+    /corpus init does not accept extra positional arguments/,
+  );
+
+  await assert.rejects(
+    () => execFileAsync(process.execPath, [
+      cliPath.pathname,
+      "corpus",
+      "repos",
+      "extra",
+      "--db",
+      "file:test.db",
+    ]),
+    /corpus repos does not accept extra positional arguments/,
+  );
+
+  await assert.rejects(
+    () => execFileAsync(process.execPath, [
+      cliPath.pathname,
+      "corpus",
+      "delete-pr",
+      "owner/name",
+      "123",
+      "stale",
+      "--db",
+      "file:test.db",
+    ]),
+    /corpus delete-pr does not accept extra positional arguments/,
+  );
+
+  await assert.rejects(
+    () => execFileAsync(process.execPath, [
+      cliPath.pathname,
+      "corpus",
+      "delete-repo",
+      "owner/name",
+      "stale",
+      "--db",
+      "file:test.db",
+    ]),
+    /corpus delete-repo does not accept extra positional arguments/,
+  );
+});
+
 test("existing commands still reject unexpected positionals", async () => {
   await assert.rejects(
     () => execFileAsync(process.execPath, [

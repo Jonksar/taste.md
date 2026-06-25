@@ -187,15 +187,8 @@ async function runCorpus(
   if (!validMetadataCommands.has(subcommand)) {
     throw new Error(`Unknown corpus command: ${subcommand}`);
   }
-  if (subcommand === "prs" && !positionals[0]) {
-    throw new Error("corpus prs requires a repository.");
-  }
-  if (subcommand === "delete-pr" && (!positionals[0] || !positionals[1])) {
-    throw new Error("corpus delete-pr requires a repository and pull request number.");
-  }
-  if (subcommand === "delete-repo" && !positionals[0]) {
-    throw new Error("corpus delete-repo requires a repository.");
-  }
+
+  assertCorpusArity(subcommand, positionals);
 
   const corpus = createMetadataOnlyCorpus(flags);
   await corpus.initialize();
@@ -230,6 +223,46 @@ async function runCorpus(
   if (subcommand === "delete-repo") {
     const repo = positionals[0]!;
     await corpus.deleteRepository(repo);
+  }
+}
+
+function assertCorpusArity(subcommand: string, positionals: string[]): void {
+  const arity = positionals.length;
+
+  if (subcommand === "init" || subcommand === "repos") {
+    if (arity !== 0) {
+      throw new Error(`corpus ${subcommand} does not accept extra positional arguments.`);
+    }
+    return;
+  }
+
+  if (subcommand === "prs") {
+    if (arity === 0) {
+      throw new Error("corpus prs requires a repository.");
+    }
+    if (arity !== 1) {
+      throw new Error("corpus prs does not accept extra positional arguments.");
+    }
+    return;
+  }
+
+  if (subcommand === "delete-pr") {
+    if (arity < 2) {
+      throw new Error("corpus delete-pr requires a repository and pull request number.");
+    }
+    if (arity !== 2) {
+      throw new Error("corpus delete-pr does not accept extra positional arguments.");
+    }
+    return;
+  }
+
+  if (subcommand === "delete-repo") {
+    if (arity === 0) {
+      throw new Error("corpus delete-repo requires a repository.");
+    }
+    if (arity !== 1) {
+      throw new Error("corpus delete-repo does not accept extra positional arguments.");
+    }
   }
 }
 
