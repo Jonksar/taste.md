@@ -114,6 +114,48 @@ workspace:
 - `examples/ice.taste.md`
 - `examples/ice.taste_log.md`
 
+## Pull request semantic corpus
+
+The corpus metadata commands initialize and inspect a Turso/libSQL pull request
+corpus database.
+
+```bash
+taste-md corpus init --db file:taste-prs.db
+taste-md corpus repos --db file:taste-prs.db
+taste-md corpus prs owner/repo --db file:taste-prs.db
+```
+
+Embedding-backed indexing and semantic queries are library features in this
+implementation. Application code supplies an `EmbeddingProvider` with
+`embedDocuments(texts)` and `embedQuery(text)`, then calls
+`indexRepositories()` and `searchPullRequests()`. Repository indexing can use
+the GitHub CLI adapter:
+
+```bash
+gh auth login
+```
+
+The local outcome fixture used by the semantic corpus tests is refreshed from
+`gh` with:
+
+```bash
+npm run refresh:pr-corpus-outcomes
+```
+
+The first indexed source kinds are `pr_title` and `pr_body`; the schema also
+supports `issue_comment`, `review_comment`, `review_body`, `commit_message`,
+and `changed_file`.
+
+Privacy boundary: PR title/body/source text is filtered through the configured
+source text filter before storage and before embeddings. A local file database
+plus `embeddingProviderLocation: "local"` keeps source text local. Remote
+Turso/libSQL URLs throw unless explicitly acknowledged through
+`allowRemoteDatabase: true` or the CLI remote database flag; warnings are
+additional context after opt-in. Any embedding provider without
+`embeddingProviderLocation: "local"` is treated as third-party and requires
+`allowThirdPartyEmbeddingProvider: true`. Cleartext `http:` and `ws:` database
+URLs require an explicit insecure override.
+
 ## Include From AGENTS.md Or CLAUDE.md
 
 Generated `taste.md` is plain Markdown. Keep it in the project and reference it
@@ -136,5 +178,5 @@ npm run build
 npm test
 ```
 
-This repository has no runtime dependencies. It uses TypeScript for source and
-Node's built-in test runner for tests.
+This repository uses TypeScript for source, `@libsql/client` for the pull
+request corpus storage backend, and Node's built-in test runner for tests.

@@ -7,11 +7,23 @@ import { calculateConfidence } from "./formula.js";
 import { fetchPullRequestEvidence } from "./github.js";
 import { discoverRepositoryCandidates } from "./guidelines.js";
 import { renderTasteLogMarkdown, renderTasteMarkdown } from "./markdown.js";
+import {
+  createPullRequestCorpus,
+  type CorpusPrivacyOptions,
+  type PullRequestCorpus,
+} from "./pr-corpus.js";
 
 const DEFAULT_OUTPUT = "taste.md";
 
 type ParsedArgs = {
   command: string | undefined;
+  flags: Map<string, string[]>;
+  positionals: string[];
+};
+
+type ParsedCorpusArgs = {
+  subcommand: string | undefined;
+  positionals: string[];
   flags: Map<string, string[]>;
 };
 
@@ -39,6 +51,12 @@ async function main(args: string[]): Promise<void> {
 
   if (parsed.command === "discover") {
     await runDiscover(parsed.flags);
+    return;
+  }
+
+  if (parsed.command === "corpus") {
+    const corpusArgs = parseCorpusArgs(parsed.positionals, parsed.flags);
+    await runCorpus(corpusArgs.subcommand, corpusArgs.positionals, corpusArgs.flags);
     return;
   }
 
@@ -101,10 +119,15 @@ async function loadPullRequests(flags: Map<string, string[]>): Promise<PullReque
 function parseArgs(args: string[]): ParsedArgs {
   const [command, ...rest] = args;
   const flags = new Map<string, string[]>();
+  const positionals: string[] = [];
 
   for (let index = 0; index < rest.length; index += 1) {
     const token = rest[index];
     if (!token?.startsWith("--")) {
+      if (command === "corpus") {
+        positionals.push(token ?? "");
+        continue;
+      }
       throw new Error(`Unexpected argument: ${token ?? ""}`);
     }
 
@@ -118,7 +141,12 @@ function parseArgs(args: string[]): ParsedArgs {
     flags.set(name, values);
   }
 
-  return { command, flags };
+  return { command, flags, positionals };
+}
+
+function parseCorpusArgs(positionals: string[], flags: Map<string, string[]>): ParsedCorpusArgs {
+  const [subcommand, ...rest] = positionals;
+  return { subcommand, positionals: rest, flags };
 }
 
 function requiredNumber(flags: Map<string, string[]>, name: string): number {
@@ -148,6 +176,114 @@ function parseRequiredInteger(value: string, label: string): number {
   return parsed;
 }
 
+async function runCorpus(
+  subcommand: string | undefined,
+  positionals: string[],
+  flags: Map<string, string[]>,
+): Promise<void> {
+  if (!subcommand) throw new Error("corpus requires a subcommand.");
+
+  const validMetadataCommands = new Set(["init", "repos", "prs", "delete-pr", "delete-repo"]);
+  if (!validMetadataCommands.has(subcommand)) {
+    throw new Error(`Unknown corpus command: ${subcommand}`);
+  }
+
+  assertCorpusArity(subcommand, positionals);
+
+  const corpus = createMetadataOnlyCorpus(flags);
+  await corpus.initialize();
+
+  if (subcommand === "init") {
+    stdout.write("Corpus initialized.\n");
+    return;
+  }
+
+  if (subcommand === "repos") {
+    stdout.write(`${JSON.stringify(await corpus.listRepositories(), null, 2)}\n`);
+    return;
+  }
+
+  if (subcommand === "prs") {
+    const repo = positionals[0]!;
+    const limit = firstFlag(flags, "limit");
+    const options = limit === undefined
+      ? undefined
+      : { limit: parseRequiredInteger(limit, "limit") };
+    stdout.write(`${JSON.stringify(await corpus.listPullRequests(repo, options), null, 2)}\n`);
+    return;
+  }
+
+  if (subcommand === "delete-pr") {
+    const repo = positionals[0]!;
+    const pr = positionals[1]!;
+    await corpus.deletePullRequest(repo, parseRequiredInteger(pr, "pull request number"));
+    return;
+  }
+
+  if (subcommand === "delete-repo") {
+    const repo = positionals[0]!;
+    await corpus.deleteRepository(repo);
+  }
+}
+
+function assertCorpusArity(subcommand: string, positionals: string[]): void {
+  const arity = positionals.length;
+
+  if (subcommand === "init" || subcommand === "repos") {
+    if (arity !== 0) {
+      throw new Error(`corpus ${subcommand} does not accept extra positional arguments.`);
+    }
+    return;
+  }
+
+  if (subcommand === "prs") {
+    if (arity === 0) {
+      throw new Error("corpus prs requires a repository.");
+    }
+    if (arity !== 1) {
+      throw new Error("corpus prs does not accept extra positional arguments.");
+    }
+    return;
+  }
+
+  if (subcommand === "delete-pr") {
+    if (arity < 2) {
+      throw new Error("corpus delete-pr requires a repository and pull request number.");
+    }
+    if (arity !== 2) {
+      throw new Error("corpus delete-pr does not accept extra positional arguments.");
+    }
+    return;
+  }
+
+  if (subcommand === "delete-repo") {
+    if (arity === 0) {
+      throw new Error("corpus delete-repo requires a repository.");
+    }
+    if (arity !== 1) {
+      throw new Error("corpus delete-repo does not accept extra positional arguments.");
+    }
+  }
+}
+
+function corpusDatabaseUrl(flags: Map<string, string[]>): string {
+  return firstFlag(flags, "db") ?? env.TASTE_CORPUS_DB ?? "file:taste-prs.db";
+}
+
+function createMetadataOnlyCorpus(flags: Map<string, string[]>): PullRequestCorpus {
+  return createPullRequestCorpus({
+    database: { url: corpusDatabaseUrl(flags) },
+    privacy: cliPrivacyOptions(flags),
+  });
+}
+
+function cliPrivacyOptions(flags: Map<string, string[]>): CorpusPrivacyOptions {
+  return {
+    allowRemoteDatabase: firstFlag(flags, "allow-remote-db") === "true",
+    allowInsecureRemoteDatabase: firstFlag(flags, "allow-insecure-remote-db") === "true",
+  };
+}
+
 async function writeTasteArtifacts(
   candidates: ReturnType<typeof deriveTasteCandidates>,
   output: string,
@@ -173,6 +309,15 @@ Commands:
   generate --input <prs.json> [--output taste.md] [--log-output taste_log.md] [--lambda <n>]
   generate --repo owner/name --pr 123 [--pr 456] [--output taste.md] [--log-output taste_log.md] [--lambda <n>]
   discover --repo-path <path> [--output taste.md] [--log-output taste_log.md] [--lambda <n>]
+  corpus init [--db file:taste-prs.db]
+  corpus repos [--db file:taste-prs.db]
+  corpus prs owner/name [--db file:taste-prs.db] [--limit 100]
+  corpus delete-pr owner/name 123 [--db file:taste-prs.db]
+  corpus delete-repo owner/name [--db file:taste-prs.db]
+
+  Remote DB boundaries:
+    --allow-remote-db true
+    --allow-insecure-remote-db true
 
 Formula:
   confidence = clamp01(reward - lambda * anchorDrift)

@@ -19,6 +19,7 @@
     "build": "tsc -p tsconfig.json",
     "prepare": "npm run build",
     "test": "node --test test/*.test.mjs",
+    "refresh:pr-corpus-outcomes": "node scripts/refresh-pr-corpus-outcomes.mjs",
     "check": "npm run build && npm test"
   },
   "keywords": [
@@ -34,5 +35,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.17.4"
   }
 }

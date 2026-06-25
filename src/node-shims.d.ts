@@ -24,4 +24,27 @@ declare module "node:process" {
   export const stderr: { write(message: string): boolean };
   export const stdout: { write(message: string): boolean };
   export function exit(code?: number): never;
+  export function emitWarning(warning: string): void;
+}
+
+declare module "node:crypto" {
+  export interface Hash {
+    update(data: string): Hash;
+    digest(encoding: "hex"): string;
+  }
+
+  export function createHash(algorithm: string): Hash;
+}
+
+declare module "node:child_process" {
+  export interface ExecFileOptions {
+    maxBuffer?: number;
+  }
+
+  export function execFile(
+    file: string,
+    args: readonly string[],
+    options: ExecFileOptions,
+    callback: (error: Error | null, stdout: string, stderr: string) => void,
+  ): void;
 }
