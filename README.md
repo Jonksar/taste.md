@@ -135,6 +135,13 @@ the GitHub CLI adapter:
 gh auth login
 ```
 
+The local outcome fixture used by the semantic corpus tests is refreshed from
+`gh` with:
+
+```bash
+npm run refresh:pr-corpus-outcomes
+```
+
 The first indexed source kinds are `pr_title` and `pr_body`; the schema also
 supports `issue_comment`, `review_comment`, `review_body`, `commit_message`,
 and `changed_file`.

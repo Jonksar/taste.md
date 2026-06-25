@@ -1,0 +1,229 @@
+[
+  {
+    "repository": {
+      "provider": "github",
+      "fullName": "iter8-ai/fire",
+      "owner": "iter8-ai",
+      "name": "fire",
+      "defaultBranch": "master",
+      "isArchived": false
+    },
+    "pullRequest": {
+      "repoFullName": "iter8-ai/fire",
+      "number": 553,
+      "url": "https://github.com/iter8-ai/fire/pull/553",
+      "state": "merged",
+      "title": "Deepen assistant turn runner",
+      "body": "Extracts assistant turn runner lifecycle architecture from AssistantService. The runner owns one assistant turn of agent runtime work, stream persistence, tool setup, cancellation, and service boundary behavior.",
+      "author": "Jonksar",
+      "createdAt": "2026-06-17T14:39:56Z",
+      "updatedAt": "2026-06-21T22:18:13Z",
+      "mergedAt": "2026-06-21T22:18:11Z",
+      "closedAt": "2026-06-21T22:18:11Z"
+    },
+    "sources": []
+  },
+  {
+    "repository": {
+      "provider": "github",
+      "fullName": "opencode-ai/opencode",
+      "owner": "opencode-ai",
+      "name": "opencode",
+      "defaultBranch": "main",
+      "isArchived": true
+    },
+    "pullRequest": {
+      "repoFullName": "opencode-ai/opencode",
+      "number": 348,
+      "url": "https://github.com/opencode-ai/opencode/pull/348",
+      "state": "open",
+      "title": "Todo System",
+      "body": "Adds a TODO system for the OpenCode terminal agent, similar to Claude Code and Amp agents, so coding tasks can track local steps and progress.",
+      "author": "wolfgangmeyers",
+      "createdAt": "2025-07-25T00:29:33Z",
+      "updatedAt": "2025-07-29T17:41:05Z"
+    },
+    "sources": []
+  },
+  {
+    "repository": {
+      "provider": "github",
+      "fullName": "openai/codex",
+      "owner": "openai",
+      "name": "codex",
+      "defaultBranch": "main",
+      "isArchived": false
+    },
+    "pullRequest": {
+      "repoFullName": "openai/codex",
+      "number": 30112,
+      "url": "https://github.com/openai/codex/pull/30112",
+      "state": "open",
+      "title": "[codex] add process-owned code-mode session client",
+      "body": "Adds process-owned code-mode sessions, supervised child-process transport, delegate lifecycle validation, cancellation-safe ownership handoff, and durable cleanup for long-lived coding sessions.",
+      "author": "cconger",
+      "createdAt": "2026-06-25T20:02:54Z",
+      "updatedAt": "2026-06-25T20:02:54Z"
+    },
+    "sources": []
+  },
+  {
+    "repository": {
+      "provider": "github",
+      "fullName": "vercel/ai",
+      "owner": "vercel",
+      "name": "ai",
+      "defaultBranch": "main",
+      "isArchived": false
+    },
+    "pullRequest": {
+      "repoFullName": "vercel/ai",
+      "number": 14476,
+      "url": "https://github.com/vercel/ai/pull/14476",
+      "state": "open",
+      "title": "docs(content): add ToolLoopAgent testing examples",
+      "body": "Adds ToolLoopAgent testing examples for generate and stream. The docs show MockLanguageModel usage, simulateReadableStream, result.consumeStream, and testing examples for agent tool loop behavior.",
+      "author": "smorchj",
+      "createdAt": "2026-04-15T05:27:54Z",
+      "updatedAt": "2026-04-15T05:28:07Z"
+    },
+    "sources": []
+  },
+  {
+    "repository": {
+      "provider": "github",
+      "fullName": "continuedev/continue",
+      "owner": "continuedev",
+      "name": "continue",
+      "defaultBranch": "main",
+      "isArchived": false
+    },
+    "pullRequest": {
+      "repoFullName": "continuedev/continue",
+      "number": 12427,
+      "url": "https://github.com/continuedev/continue/pull/12427",
+      "state": "open",
+      "title": "fix: show local agent config names",
+      "body": "Initializes local agent profile titles from YAML name fields. Keeps filename fallback for invalid YAML configs so the profile selector remains usable.",
+      "author": "mturac",
+      "createdAt": "2026-05-16T21:03:13Z",
+      "updatedAt": "2026-05-19T09:43:12Z"
+    },
+    "sources": []
+  },
+  {
+    "repository": {
+      "provider": "github",
+      "fullName": "github/github-mcp-server",
+      "owner": "github",
+      "name": "github-mcp-server",
+      "defaultBranch": "main",
+      "isArchived": false
+    },
+    "pullRequest": {
+      "repoFullName": "github/github-mcp-server",
+      "number": 2535,
+      "url": "https://github.com/github/github-mcp-server/pull/2535",
+      "state": "merged",
+      "title": "docs: add installation guides for Zed and OpenCode",
+      "body": "Adds MCP installation guides for Zed and OpenCode host applications. Covers remote server config, local Docker config, opencode mcp list, tool gating, and host-specific setup.",
+      "author": "jluocsa",
+      "createdAt": "2026-05-23T18:43:44Z",
+      "updatedAt": "2026-05-31T11:15:05Z",
+      "mergedAt": "2026-05-30T09:01:52Z",
+      "closedAt": "2026-05-30T09:01:52Z"
+    },
+    "sources": []
+  },
+  {
+    "repository": {
+      "provider": "github",
+      "fullName": "modelcontextprotocol/typescript-sdk",
+      "owner": "modelcontextprotocol",
+      "name": "typescript-sdk",
+      "defaultBranch": "main",
+      "isArchived": false
+    },
+    "pullRequest": {
+      "repoFullName": "modelcontextprotocol/typescript-sdk",
+      "number": 2371,
+      "url": "https://github.com/modelcontextprotocol/typescript-sdk/pull/2371",
+      "state": "merged",
+      "title": "feat(core,server,client): re-pin spec to f68d864a; wire SubscriptionsListenResult (#2953)",
+      "body": "Re-pins the MCP spec checkout and wires SubscriptionsListenResult. Covers stream teardown, subscription metadata, client and server tests, and conformance baselines.",
+      "author": "felixweinberger",
+      "createdAt": "2026-06-25T13:10:32Z",
+      "updatedAt": "2026-06-25T13:31:09Z",
+      "mergedAt": "2026-06-25T13:31:07Z",
+      "closedAt": "2026-06-25T13:31:07Z"
+    },
+    "sources": []
+  },
+  {
+    "repository": {
+      "provider": "github",
+      "fullName": "tursodatabase/turso",
+      "owner": "tursodatabase",
+      "name": "turso",
+      "defaultBranch": "main",
+      "isArchived": false
+    },
+    "pullRequest": {
+      "repoFullName": "tursodatabase/turso",
+      "number": 6777,
+      "url": "https://github.com/tursodatabase/turso/pull/6777",
+      "state": "closed",
+      "title": "test(vacuum): cover VACUUM INTO for arrays and vector64",
+      "body": "Adds integration tests for VACUUM INTO preserving vector64 blobs, vector_distance_cos behavior, arrays, text arrays, integer arrays, and multidim arrays.",
+      "author": "f4rkh4d",
+      "createdAt": "2026-05-09T10:30:29Z",
+      "updatedAt": "2026-05-24T06:34:35Z",
+      "closedAt": "2026-05-24T06:34:35Z"
+    },
+    "sources": []
+  },
+  {
+    "repository": {
+      "provider": "github",
+      "fullName": "langchain-ai/langchainjs",
+      "owner": "langchain-ai",
+      "name": "langchainjs",
+      "defaultBranch": "main",
+      "isArchived": false
+    },
+    "pullRequest": {
+      "repoFullName": "langchain-ai/langchainjs",
+      "number": 11111,
+      "url": "https://github.com/langchain-ai/langchainjs/pull/11111",
+      "state": "open",
+      "title": "fix(openai): preserve reasoning_content in assistant message serialization",
+      "body": "Preserves reasoning_content in assistant message serialization for DeepSeek tool-calling loops so follow-up API turns keep the required reasoning payload.",
+      "author": "SapphireSmith",
+      "createdAt": "2026-06-25T10:15:43Z",
+      "updatedAt": "2026-06-25T10:23:08Z"
+    },
+    "sources": []
+  },
+  {
+    "repository": {
+      "provider": "github",
+      "fullName": "run-llama/LlamaIndexTS",
+      "owner": "run-llama",
+      "name": "LlamaIndexTS",
+      "defaultBranch": "main",
+      "isArchived": true
+    },
+    "pullRequest": {
+      "repoFullName": "run-llama/LlamaIndexTS",
+      "number": 2275,
+      "url": "https://github.com/run-llama/LlamaIndexTS/pull/2275",
+      "state": "open",
+      "title": "fix(qdrant): fix pre-filter mapping and ingestion loop bug (#2035)",
+      "body": "Fixes Qdrant metadata filter mapping, pre-filter behavior, ingestion batching, numeric IN filters, and vector store compatibility for retrieval pipelines.",
+      "author": "himanshumiisshra",
+      "createdAt": "2026-04-23T06:26:19Z",
+      "updatedAt": "2026-04-23T06:26:24Z"
+    },
+    "sources": []
+  }
+]
